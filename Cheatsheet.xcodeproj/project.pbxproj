@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		01DA82C32FF7706E0093021F /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = AB01000000000000000000B1 /* KeyboardShortcuts */; };
+		01DA82C42FF7706E0093021F /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = AB01000000000000000000B2 /* Markdown */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		01DA82772FF76BB60093021F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +57,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				01DA82C42FF7706E0093021F /* Markdown in Frameworks */,
+				01DA82C32FF7706E0093021F /* KeyboardShortcuts in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +119,8 @@
 			);
 			name = Cheatsheet;
 			packageProductDependencies = (
+				AB01000000000000000000B1 /* KeyboardShortcuts */,
+				AB01000000000000000000B2 /* Markdown */,
 			);
 			productName = Cheatsheet;
 			productReference = 01DA82692FF76BB50093021F /* Cheatsheet.app */;
@@ -195,6 +204,10 @@
 			);
 			mainGroup = 01DA82602FF76BB50093021F;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				AB01000000000000000000A1 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
+				AB01000000000000000000A2 /* XCRemoteSwiftPackageReference "swift-markdown" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 01DA826A2FF76BB50093021F /* Products */;
 			projectDirPath = "";
@@ -403,6 +416,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -435,6 +449,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -573,6 +588,38 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		AB01000000000000000000A1 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+		AB01000000000000000000A2 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swiftlang/swift-markdown";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.4.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AB01000000000000000000B1 /* KeyboardShortcuts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AB01000000000000000000A1 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
+			productName = KeyboardShortcuts;
+		};
+		AB01000000000000000000B2 /* Markdown */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AB01000000000000000000A2 /* XCRemoteSwiftPackageReference "swift-markdown" */;
+			productName = Markdown;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 01DA82612FF76BB50093021F /* Project object */;
 }
