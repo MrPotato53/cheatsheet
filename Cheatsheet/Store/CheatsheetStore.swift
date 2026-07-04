@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KeyboardShortcuts
+import SwiftUI
 
 @Observable
 @MainActor
@@ -78,6 +79,9 @@ final class CheatsheetStore {
         let copied = copyFiles(urls, into: sheets[index])
         guard !copied.isEmpty else { return }
         sheets[index].files.append(contentsOf: copied)
+        if !sheets[index].pageOrder.isEmpty {
+            sheets[index].pageOrder += expandRefs(files: copied, for: sheets[index])
+        }
         persist()
     }
 
@@ -85,6 +89,69 @@ final class CheatsheetStore {
         guard let index = sheets.firstIndex(where: { $0.id == sheetID }) else { return }
         try? FileManager.default.removeItem(at: fileURL(for: sheets[index], file: file))
         sheets[index].files.removeAll { $0 == file }
+        sheets[index].pageOrder.removeAll { $0.file == file }
+        persist()
+    }
+
+    func setPageOrder(_ order: [PageRef], for sheetID: Cheatsheet.ID) {
+        guard let index = sheets.firstIndex(where: { $0.id == sheetID }) else { return }
+        guard sheets[index].pageOrder != order else { return }
+        sheets[index].pageOrder = order
+        persist()
+    }
+
+    /// Materializes the page order (if still derived) and edits one page's ref.
+    func updatePage(withKey key: PageKey, in sheetID: Cheatsheet.ID, mutate: (inout PageRef) -> Void) {
+        updatePages(withKeys: [key], in: sheetID, mutate: mutate)
+    }
+
+    /// Batch variant: applies the mutation to every matching page in a single
+    /// persist, so multi-selection edits don't write the library repeatedly.
+    func updatePages(withKeys keys: Set<PageKey>, in sheetID: Cheatsheet.ID, mutate: (inout PageRef) -> Void) {
+        guard !keys.isEmpty, let index = sheets.firstIndex(where: { $0.id == sheetID }) else { return }
+        var refs = orderedRefs(for: sheets[index])
+        var changed = false
+        for refIndex in refs.indices where keys.contains(refs[refIndex].key) {
+            mutate(&refs[refIndex])
+            changed = true
+        }
+        guard changed else { return }
+        sheets[index].pageOrder = refs
+        persist()
+    }
+
+    func setRotation(_ rotation: Rotation, forPageWithKey key: PageKey, in sheetID: Cheatsheet.ID) {
+        updatePage(withKey: key, in: sheetID) { $0.rotation = rotation }
+    }
+
+    func setPosition(_ position: RelativePosition, for sheetID: Cheatsheet.ID) {
+        applyGeometry(scale: nil, position: position, for: sheetID)
+    }
+
+    /// Commits runtime drags/resizes of the overlay in a single persist.
+    func applyGeometry(scale: Double?, position: RelativePosition?, for sheetID: Cheatsheet.ID) {
+        guard let index = sheets.firstIndex(where: { $0.id == sheetID }) else { return }
+        var changed = false
+        if let scale, sheets[index].previewScale != scale {
+            sheets[index].previewScale = scale
+            changed = true
+        }
+        if let position, sheets[index].position != position {
+            sheets[index].position = position
+            changed = true
+        }
+        if changed {
+            persist()
+        }
+    }
+
+    /// Sheet-wide rotation clears per-page overrides so the result is uniform.
+    func setSheetRotation(_ rotation: Rotation, for sheetID: Cheatsheet.ID) {
+        guard let index = sheets.firstIndex(where: { $0.id == sheetID }) else { return }
+        sheets[index].rotation = rotation
+        for refIndex in sheets[index].pageOrder.indices {
+            sheets[index].pageOrder[refIndex].rotation = nil
+        }
         persist()
     }
 
@@ -92,6 +159,11 @@ final class CheatsheetStore {
         guard let index = sheets.firstIndex(where: { $0.id == sheet.id }) else { return }
         guard sheets[index] != sheet else { return }
         sheets[index] = sheet
+        persist()
+    }
+
+    func moveSheets(fromOffsets: IndexSet, toOffset: Int) {
+        sheets.move(fromOffsets: fromOffsets, toOffset: toOffset)
         persist()
     }
 

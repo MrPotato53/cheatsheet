@@ -1,3 +1,4 @@
+import KeyboardShortcuts
 import ServiceManagement
 import SwiftUI
 
@@ -21,6 +22,11 @@ struct GeneralSettingsView: View {
             }
             Section {
                 Toggle("Dismiss overlay with Escape", isOn: $dismissWithEsc)
+            }
+            Section {
+                LabeledContent("Pin/unpin current cheatsheet") {
+                    KeyboardShortcuts.Recorder("", name: .togglePin)
+                }
             }
         }
         .formStyle(.grouped)

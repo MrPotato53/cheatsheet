@@ -3,9 +3,18 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct CheatsheetsSettingsView: View {
+    /// Both the sidebar's + and the detail's "Add Files…" share one fileImporter:
+    /// SwiftUI only presents one fileImporter per hierarchy, so a second modifier
+    /// on the detail view would silently stop the picker from opening.
+    enum ImportTarget {
+        case newSheet
+        case existingSheet(Cheatsheet.ID)
+    }
+
     @Environment(CheatsheetStore.self) private var store
     @State private var selection: Cheatsheet.ID?
     @State private var isImporterPresented = false
+    @State private var importTarget: ImportTarget = .newSheet
     @State private var isDeleteConfirmationPresented = false
     @State private var pendingDeletion: Cheatsheet?
 
@@ -31,8 +40,13 @@ struct CheatsheetsSettingsView: View {
             allowsMultipleSelection: true
         ) { result in
             guard let urls = try? result.get() else { return }
-            if let sheet = store.addSheet(files: urls) {
-                selection = sheet.id
+            switch importTarget {
+            case .newSheet:
+                if let sheet = store.addSheet(files: urls) {
+                    selection = sheet.id
+                }
+            case .existingSheet(let sheetID):
+                store.addFiles(urls, to: sheetID)
             }
         }
         .confirmationDialog(
@@ -68,6 +82,9 @@ struct CheatsheetsSettingsView: View {
                     }
                     .tag(sheet.id)
                 }
+                .onMove { offsets, destination in
+                    store.moveSheets(fromOffsets: offsets, toOffset: destination)
+                }
             }
             .overlay {
                 if store.sheets.isEmpty {
@@ -81,6 +98,7 @@ struct CheatsheetsSettingsView: View {
             Divider()
             HStack(spacing: 4) {
                 Button {
+                    importTarget = .newSheet
                     isImporterPresented = true
                 } label: {
                     Image(systemName: "plus")
@@ -112,13 +130,30 @@ struct CheatsheetsSettingsView: View {
     private var detail: some View {
         Group {
             if let selectedSheet {
-                CheatsheetDetailView(sheet: binding(for: selectedSheet))
-                    .id(selectedSheet.id)
+                CheatsheetDetailView(sheet: binding(for: selectedSheet)) {
+                    importTarget = .existingSheet(selectedSheet.id)
+                    isImporterPresented = true
+                }
+                .id(selectedSheet.id)
             } else {
-                ContentUnavailableView {
-                    Label("No selection", systemImage: "sidebar.left")
-                } description: {
-                    Text("Select a cheatsheet, or add one with the + button.")
+                VStack(spacing: 16) {
+                    Image(systemName: "rectangle.stack.badge.plus")
+                        .font(.system(size: 44))
+                        .foregroundStyle(.secondary)
+                    Text("No cheatsheet selected")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        importTarget = .newSheet
+                        isImporterPresented = true
+                    } label: {
+                        Label("Create Cheatsheet", systemImage: "plus")
+                            .font(.title3)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                 }
             }
         }
