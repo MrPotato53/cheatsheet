@@ -15,8 +15,9 @@ final class AppModel {
         self.store = store
         self.overlay = overlay
         self.hotkeys = hotkeys
-        store.onChange = { [weak hotkeys] in
+        store.onChange = { [weak hotkeys, weak overlay] in
             hotkeys?.sync()
+            overlay?.refreshFromStore()
         }
         hotkeys.sync()
     }

@@ -1,5 +1,10 @@
+import AppKit
 import Foundation
 import KeyboardShortcuts
+
+extension KeyboardShortcuts.Name {
+    static let togglePin = Self("togglePinCheatsheet", default: .init(.p, modifiers: [.command, .shift]))
+}
 
 @MainActor
 final class HotkeyManager {
@@ -10,6 +15,11 @@ final class HotkeyManager {
     init(store: CheatsheetStore, overlay: OverlayController) {
         self.store = store
         self.overlay = overlay
+        KeyboardShortcuts.onKeyDown(for: .togglePin) { @Sendable in
+            Task { @MainActor in
+                AppModel.shared.overlay.togglePinFrontmost()
+            }
+        }
     }
 
     /// Registers handlers for new sheets and removes handlers for deleted ones.
@@ -51,6 +61,6 @@ final class HotkeyManager {
             let sheet = store.sheets.first(where: { $0.id == sheetID }),
             sheet.activation == .hold
         else { return }
-        overlay.hide()
+        overlay.handleHoldKeyUp(sheetID: sheetID)
     }
 }
