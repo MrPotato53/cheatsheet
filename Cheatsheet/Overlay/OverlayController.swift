@@ -23,6 +23,7 @@ final class OverlaySession: Identifiable {
     var pages: [SheetPage] = []
     var pageIndex = 0
     var isPinned = false
+    var isLoadingPages = false
 
     @ObservationIgnored let panel = OverlayPanel()
     @ObservationIgnored var screen: NSScreen?
@@ -73,8 +74,40 @@ final class OverlayController {
     private(set) var sessions: [OverlaySession] = []
     private var lastPageIndex: [Cheatsheet.ID: Int] = [:]
 
+    // Pre-built pages and pre-decoded start-page images for sheets with
+    // "keep start page loaded" — their opens skip the loading state entirely.
+    private struct WarmInputs: Hashable {
+        let files: [String]
+        let pageOrder: [PageRef]
+        let startPage: StartPage
+        let previewScale: Double
+        let target: DisplayTarget
+        let lastViewedIndex: Int
+    }
+
+    private struct WarmEntry {
+        let pages: [SheetPage]
+        let startIndex: Int
+        let inputs: WarmInputs
+        let imageKey: String?
+    }
+
+    private var warmedStartPages: [Cheatsheet.ID: WarmEntry] = [:]
+
     init(store: CheatsheetStore) {
         self.store = store
+    }
+
+    private func startIndex(for sheet: Cheatsheet, pageCount: Int) -> Int {
+        let lastIndex = max(pageCount - 1, 0)
+        switch sheet.startPage {
+        case .first:
+            return 0
+        case .lastViewed:
+            return min(lastPageIndex[sheet.id] ?? 0, lastIndex)
+        case .fixed(let index):
+            return min(max(index, 0), lastIndex)
+        }
     }
 
     private var transientSession: OverlaySession? {
@@ -110,16 +143,7 @@ final class OverlayController {
         }
 
         let session = OverlaySession(sheet: sheet)
-        session.pages = store.pages(for: sheet)
-        let lastIndex = max(session.pages.count - 1, 0)
-        switch sheet.startPage {
-        case .first:
-            session.pageIndex = 0
-        case .lastViewed:
-            session.pageIndex = min(lastPageIndex[sheet.id] ?? 0, lastIndex)
-        case .fixed(let index):
-            session.pageIndex = min(max(index, 0), lastIndex)
-        }
+        session.isLoadingPages = true
         guard let screen = resolveScreen(for: sheet.target) else { return }
         session.screen = screen
 
@@ -157,12 +181,127 @@ final class OverlayController {
             context.duration = 0.12
             panel.animator().alphaValue = 1
         }
+
+        if sheet.keepsStartPageLoaded, let warm = warmedStartPages[sheet.id] {
+            // Warm path: pages and the start page's decoded image are ready.
+            session.pages = warm.pages
+            session.pageIndex = startIndex(for: sheet, pageCount: warm.pages.count)
+            session.isLoadingPages = false
+            updateFrame(for: session, animated: false)
+            return
+        }
+
+        // The panel is already on screen with a spinner; building the page
+        // list (which parses PDFs) happens off the main thread.
+        let mediaRoot = store.mediaRoot
+        Task { @MainActor [weak self, weak session] in
+            let pages = await Task.detached(priority: .userInitiated) {
+                CheatsheetStore.buildPages(for: sheet, mediaRoot: mediaRoot)
+            }.value
+            guard
+                let self,
+                let session,
+                self.sessions.contains(where: { $0 === session })
+            else { return }
+            session.pages = pages
+            session.pageIndex = self.startIndex(for: sheet, pageCount: pages.count)
+            session.isLoadingPages = false
+            self.updateFrame(for: session, animated: true)
+        }
+    }
+
+    // MARK: - Start page warming
+
+    func warmStartPages() {
+        let flagged = store.sheets.filter(\.keepsStartPageLoaded)
+        let flaggedIDs = Set(flagged.map(\.id))
+        warmedStartPages = warmedStartPages.filter { flaggedIDs.contains($0.key) }
+        WarmPageImages.retain(only: Set(warmedStartPages.values.compactMap(\.imageKey)))
+        for sheet in flagged {
+            warmStartPage(for: sheet)
+        }
+    }
+
+    private func warmInputs(for sheet: Cheatsheet) -> WarmInputs {
+        let lastViewedIndex: Int
+        if case .lastViewed = sheet.startPage {
+            lastViewedIndex = lastPageIndex[sheet.id] ?? 0
+        } else {
+            lastViewedIndex = -1
+        }
+        return WarmInputs(
+            files: sheet.files,
+            pageOrder: sheet.pageOrder,
+            startPage: sheet.startPage,
+            previewScale: sheet.previewScale,
+            target: sheet.target,
+            lastViewedIndex: lastViewedIndex
+        )
+    }
+
+    private func warmStartPage(for sheet: Cheatsheet) {
+        let inputs = warmInputs(for: sheet)
+        if let existing = warmedStartPages[sheet.id], existing.inputs == inputs {
+            return
+        }
+        let mediaRoot = store.mediaRoot
+        let lastViewed = lastPageIndex[sheet.id] ?? 0
+        let maxPixels = ImageFileView.displayMaxPixels()
+        let screen = resolveScreen(for: sheet.target)
+        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1600, height: 1000)
+        let scale = min(max(sheet.previewScale, 0.2), 1.0)
+        let renderSize = CGSize(width: visible.width * scale, height: visible.height * scale)
+
+        Task { @MainActor [weak self] in
+            let result: ([SheetPage], Int, NSImage?)? = await Task.detached(priority: .utility) {
+                let pages = CheatsheetStore.buildPages(for: sheet, mediaRoot: mediaRoot)
+                guard !pages.isEmpty else { return nil }
+                let lastIndex = max(pages.count - 1, 0)
+                let index: Int
+                switch sheet.startPage {
+                case .first: index = 0
+                case .lastViewed: index = min(lastViewed, lastIndex)
+                case .fixed(let fixed): index = min(max(fixed, 0), lastIndex)
+                }
+                let page = pages[index]
+                let image: NSImage?
+                switch MediaKind.of(page.url) {
+                case .image:
+                    image = ImageFileView.displaySizedImage(at: page.url, maxPixels: maxPixels)
+                case .pdf:
+                    image = PDFPageView.render(url: page.url, pageIndex: page.pdfPageIndex ?? 0, size: renderSize)
+                default:
+                    image = nil
+                }
+                return (pages, index, image)
+            }.value
+            guard let self, let (pages, index, image) = result else { return }
+            // The sheet may have changed or lost the flag while decoding.
+            guard
+                let current = self.store.sheets.first(where: { $0.id == sheet.id }),
+                current.keepsStartPageLoaded
+            else { return }
+            let page = pages[index]
+            var imageKey: String?
+            if let image {
+                imageKey = WarmPageImages.key(url: page.url, pdfPageIndex: page.pdfPageIndex)
+                WarmPageImages.set(image, url: page.url, pdfPageIndex: page.pdfPageIndex)
+            }
+            self.warmedStartPages[sheet.id] = WarmEntry(
+                pages: pages,
+                startIndex: index,
+                inputs: inputs,
+                imageKey: imageKey
+            )
+        }
     }
 
     func hide(_ session: OverlaySession) {
         guard sessions.contains(where: { $0 === session }) else { return }
         lastPageIndex[session.sheet.id] = session.pageIndex
         sessions.removeAll { $0 === session }
+        // Re-warm "last viewed" start pages to the page just left.
+        warmStartPages()
         session.moveCommitTask?.cancel()
         let panel = session.panel
         NSAnimationContext.runAnimationGroup { context in
@@ -253,6 +392,7 @@ final class OverlayController {
             // Not animated: this fires on every slider tick.
             updateFrame(for: session, animated: false)
         }
+        warmStartPages()
     }
 
     private func applyGeometryBehaviors(to session: OverlaySession) {
