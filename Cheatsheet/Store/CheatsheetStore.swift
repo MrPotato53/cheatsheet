@@ -80,7 +80,7 @@ final class CheatsheetStore {
         guard !copied.isEmpty else { return }
         sheets[index].files.append(contentsOf: copied)
         if !sheets[index].pageOrder.isEmpty {
-            sheets[index].pageOrder += expandRefs(files: copied, for: sheets[index])
+            sheets[index].pageOrder += Self.expandRefs(files: copied, for: sheets[index], mediaRoot: mediaRoot)
         }
         persist()
     }

@@ -4,12 +4,15 @@ import PDFKit
 import SwiftUI
 
 /// Shared cache so the overlay, thumbnails, and settings preview open each PDF once.
-enum PDFCache {
+/// Nonisolated: page building runs off the main thread at overlay open;
+/// NSCache and PDFDocument creation are thread-safe.
+nonisolated enum PDFCache {
     static let documents: NSCache<NSURL, PDFDocument> = {
         let cache = NSCache<NSURL, PDFDocument>()
         cache.countLimit = 4
         return cache
     }()
+
 
     static func document(at url: URL) -> PDFDocument? {
         if let cached = documents.object(forKey: url as NSURL) {
@@ -26,11 +29,21 @@ extension CheatsheetStore {
     /// it is reconciled against the actual files so stale refs drop out and
     /// pages of newly added files append at the end.
     func pages(for sheet: Cheatsheet, includeHidden: Bool = false) -> [SheetPage] {
-        orderedRefs(for: sheet).compactMap { ref in
+        Self.buildPages(for: sheet, mediaRoot: mediaRoot, includeHidden: includeHidden)
+    }
+
+    /// Nonisolated so the overlay can build pages (which parses PDFs) off the
+    /// main thread while the panel is already on screen with a spinner.
+    nonisolated static func buildPages(
+        for sheet: Cheatsheet,
+        mediaRoot: URL,
+        includeHidden: Bool = false
+    ) -> [SheetPage] {
+        orderedRefs(for: sheet, mediaRoot: mediaRoot).compactMap { ref in
             let isHidden = ref.hidden ?? false
             guard includeHidden || !isHidden else { return nil }
             return SheetPage(
-                url: fileURL(for: sheet, file: ref.file),
+                url: Self.fileURL(mediaRoot: mediaRoot, sheetID: sheet.id, file: ref.file),
                 pdfPageIndex: ref.pdfPageIndex,
                 rotation: ref.rotation ?? sheet.rotation,
                 flipHorizontal: ref.flipHorizontal ?? false,
@@ -40,10 +53,20 @@ extension CheatsheetStore {
         }
     }
 
+    nonisolated static func fileURL(mediaRoot: URL, sheetID: Cheatsheet.ID, file: String) -> URL {
+        mediaRoot
+            .appendingPathComponent(sheetID.uuidString, isDirectory: true)
+            .appendingPathComponent(file)
+    }
+
     /// Reconciliation matches by page identity (file + PDF page), ignoring
     /// per-page settings like rotation stored alongside.
     func orderedRefs(for sheet: Cheatsheet) -> [PageRef] {
-        let derived = expandRefs(files: sheet.files, for: sheet)
+        Self.orderedRefs(for: sheet, mediaRoot: mediaRoot)
+    }
+
+    nonisolated static func orderedRefs(for sheet: Cheatsheet, mediaRoot: URL) -> [PageRef] {
+        let derived = expandRefs(files: sheet.files, for: sheet, mediaRoot: mediaRoot)
         guard !sheet.pageOrder.isEmpty else { return derived }
         let derivedKeys = Set(derived.map(\.key))
         var ordered = sheet.pageOrder.filter { derivedKeys.contains($0.key) }
@@ -52,10 +75,10 @@ extension CheatsheetStore {
         return ordered
     }
 
-    func expandRefs(files: [String], for sheet: Cheatsheet) -> [PageRef] {
+    nonisolated static func expandRefs(files: [String], for sheet: Cheatsheet, mediaRoot: URL) -> [PageRef] {
         var refs: [PageRef] = []
         for file in files {
-            let url = fileURL(for: sheet, file: file)
+            let url = Self.fileURL(mediaRoot: mediaRoot, sheetID: sheet.id, file: file)
             if MediaKind.of(url) == .pdf, let document = PDFCache.document(at: url), document.pageCount > 0 {
                 refs += (0..<document.pageCount).map { PageRef(file: file, pdfPageIndex: $0) }
             } else {

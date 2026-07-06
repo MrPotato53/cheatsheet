@@ -34,6 +34,11 @@ struct CheatsheetsSettingsView: View {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .onAppear {
+            if selection == nil {
+                selection = store.sheets.first?.id
+            }
+        }
         .fileImporter(
             isPresented: $isImporterPresented,
             allowedContentTypes: Self.importableTypes,

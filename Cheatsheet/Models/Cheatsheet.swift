@@ -93,6 +93,8 @@ nonisolated struct Cheatsheet: Identifiable, Codable, Hashable {
     var pageOrder: [PageRef] = []
     var activation: ActivationMode = .toggle
     var startPage: StartPage = .lastViewed
+    /// Keeps the start page decoded in memory at all times for instant opens.
+    var keepsStartPageLoaded: Bool = false
     var previewScale: Double = 0.6
     var position: RelativePosition = .center
     var dragBehavior: GeometryBehavior = .remembers
@@ -109,7 +111,7 @@ nonisolated struct Cheatsheet: Identifiable, Codable, Hashable {
 // Fields added after 1.0 decode with defaults so existing libraries keep loading.
 extension Cheatsheet {
     private enum CodingKeys: String, CodingKey {
-        case id, name, files, pageOrder, activation, startPage, previewScale
+        case id, name, files, pageOrder, activation, startPage, keepsStartPageLoaded, previewScale
         case position, dragBehavior, resizeBehavior, target, rotation
     }
 
@@ -134,6 +136,7 @@ extension Cheatsheet {
         pageOrder = try container.decodeIfPresent([PageRef].self, forKey: .pageOrder) ?? []
         activation = try container.decodeIfPresent(ActivationMode.self, forKey: .activation) ?? .toggle
         startPage = try container.decodeIfPresent(StartPage.self, forKey: .startPage) ?? .lastViewed
+        keepsStartPageLoaded = try container.decodeIfPresent(Bool.self, forKey: .keepsStartPageLoaded) ?? false
         previewScale = try container.decodeIfPresent(Double.self, forKey: .previewScale) ?? 0.6
         position = try container.decodeIfPresent(RelativePosition.self, forKey: .position) ?? .center
         let legacy = try decoder.container(keyedBy: LegacyKeys.self)

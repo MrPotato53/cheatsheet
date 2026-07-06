@@ -399,6 +399,7 @@ enum PageThumbnailRenderer {
         return cache
     }()
 
+
     static func thumbnail(for page: SheetPage) -> NSImage? {
         let key = "\(page.url.path)#\(page.pdfPageIndex ?? -1)" as NSString
         if let cached = cache.object(forKey: key) {
@@ -423,10 +424,12 @@ enum PageThumbnailRenderer {
 
     /// Downsamples via ImageIO so thumbnails never decode the full image.
     private static func imageThumbnail(at url: URL, maxPixels: CGFloat) -> NSImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions as CFDictionary) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCache: false,
             kCGImageSourceThumbnailMaxPixelSize: maxPixels * 2,
         ]
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {

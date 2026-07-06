@@ -23,18 +23,93 @@ struct MediaPageView: View {
     }
 }
 
+/// Decoded start pages for cheatsheets with "keep start page loaded" —
+/// renderers consult this first, making those opens spinner-free.
+@MainActor
+enum WarmPageImages {
+    private(set) static var images: [String: NSImage] = [:]
+
+    static func key(url: URL, pdfPageIndex: Int?) -> String {
+        "\(url.path)#\(pdfPageIndex ?? -1)"
+    }
+
+    static func image(url: URL, pdfPageIndex: Int?) -> NSImage? {
+        images[key(url: url, pdfPageIndex: pdfPageIndex)]
+    }
+
+    static func set(_ image: NSImage, url: URL, pdfPageIndex: Int?) {
+        images[key(url: url, pdfPageIndex: pdfPageIndex)] = image
+    }
+
+    static func retain(only keys: Set<String>) {
+        images = images.filter { keys.contains($0.key) }
+    }
+}
+
 struct ImageFileView: View {
     let url: URL
+    @State private var image: NSImage?
+    @State private var didAttemptLoad: Bool
+
+    init(url: URL) {
+        self.url = url
+        let warm = WarmPageImages.image(url: url, pdfPageIndex: nil)
+        _image = State(initialValue: warm)
+        _didAttemptLoad = State(initialValue: warm != nil)
+    }
 
     var body: some View {
-        if let image = NSImage(contentsOf: url) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .padding(8)
-        } else {
-            ContentUnavailableView("Couldn't load image", systemImage: "photo")
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(8)
+            } else if didAttemptLoad {
+                ContentUnavailableView("Couldn't load image", systemImage: "photo")
+            } else {
+                ProgressView()
+            }
         }
+        .task(id: url) {
+            guard image == nil else { return }
+            // Decode off the main actor: a main-thread decode stalls the
+            // spinner, sometimes before the panel's first frame even paints.
+            let maxPixels = Self.displayMaxPixels()
+            let target = url
+            image = await Task.detached(priority: .userInitiated) {
+                Self.displaySizedImage(at: target, maxPixels: maxPixels)
+            }.value
+            didAttemptLoad = true
+        }
+    }
+
+    static func displayMaxPixels() -> CGFloat {
+        let maxScreenPixels = NSScreen.screens
+            .map { max($0.frame.width, $0.frame.height) * $0.backingScaleFactor }
+            .max() ?? 4096
+        return min(maxScreenPixels, 4096)
+    }
+
+    /// Decodes at most display resolution via ImageIO instead of NSImage's
+    /// full-resolution decode: a 48 MP photo would otherwise pin ~180 MB while
+    /// (or after — see the retained settings preview) it's shown.
+    /// ShouldCache false: ImageIO otherwise retains a duplicate ~20 MB decoded
+    /// buffer per image in its internal cache after we're done.
+    nonisolated static func displaySizedImage(at url: URL, maxPixels: CGFloat) -> NSImage? {
+        let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceShouldCache: false,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+        ]
+        guard
+            let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions as CFDictionary),
+            let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 }
 
@@ -81,7 +156,15 @@ struct PDFPageView: View {
     let url: URL
     let pageIndex: Int
     @State private var image: NSImage?
-    @State private var didAttemptRender = false
+    @State private var didAttemptRender: Bool
+
+    init(url: URL, pageIndex: Int) {
+        self.url = url
+        self.pageIndex = pageIndex
+        let warm = WarmPageImages.image(url: url, pdfPageIndex: pageIndex)
+        _image = State(initialValue: warm)
+        _didAttemptRender = State(initialValue: warm != nil)
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -103,7 +186,15 @@ struct PDFPageView: View {
                 }
             }
             .task(id: RenderKey(url: url, pageIndex: pageIndex, size: geometry.size)) {
-                image = Self.render(url: url, pageIndex: pageIndex, size: geometry.size)
+                // Render off the main actor: a main-thread render stalls the
+                // spinner, sometimes before the panel's first frame paints.
+                let (target, index, size) = (url, pageIndex, geometry.size)
+                let rendered = await Task.detached(priority: .userInitiated) {
+                    Self.render(url: target, pageIndex: index, size: size)
+                }.value
+                if rendered != nil || image == nil {
+                    image = rendered ?? image
+                }
                 didAttemptRender = true
             }
         }
@@ -116,7 +207,7 @@ struct PDFPageView: View {
         let size: CGSize
     }
 
-    private static func render(url: URL, pageIndex: Int, size: CGSize) -> NSImage? {
+    nonisolated static func render(url: URL, pageIndex: Int, size: CGSize) -> NSImage? {
         guard size.width > 10, size.height > 10 else { return nil }
         guard let document = PDFCache.document(at: url) else { return nil }
         guard let page = document.page(at: pageIndex) else { return nil }

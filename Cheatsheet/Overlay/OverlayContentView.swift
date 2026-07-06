@@ -35,14 +35,31 @@ struct OverlayContentView: View {
         session.sheet.dragBehavior.allowsAdjustment
     }
 
+    /// The current page plus its neighbors stay mounted (hidden), so their
+    /// content is already decoded when the user pages — switching is instant.
+    private var preloadedIndices: [Int] {
+        guard !session.pages.isEmpty else { return [] }
+        let lower = max(session.pageIndex - 2, 0)
+        let upper = min(session.pageIndex + 2, session.pages.count - 1)
+        return Array(lower...upper)
+    }
+
     var body: some View {
         ZStack {
-            if let page = session.currentPage {
-                MediaPageView(page: page)
-                    .pageTransform(page)
-                    .id(page)
-            } else {
+            if session.isLoadingPages {
+                ProgressView()
+                    .controlSize(.large)
+            } else if session.pages.isEmpty {
                 ContentUnavailableView("Nothing to show", systemImage: "doc")
+            } else {
+                ForEach(preloadedIndices, id: \.self) { index in
+                    let page = session.pages[index]
+                    MediaPageView(page: page)
+                        .pageTransform(page)
+                        .opacity(index == session.pageIndex ? 1 : 0)
+                        .allowsHitTesting(index == session.pageIndex)
+                        .id(page)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

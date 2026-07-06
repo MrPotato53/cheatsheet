@@ -203,6 +203,7 @@ struct CheatsheetStoreTests {
         """
         let sheets = try JSONDecoder().decode([Cheatsheet].self, from: Data(legacyJSON.utf8))
         #expect(sheets.first?.startPage == .lastViewed)
+        #expect(sheets.first?.keepsStartPageLoaded == false)
         #expect(sheets.first?.pageOrder.isEmpty == true)
         #expect(sheets.first?.position == .center)
         #expect(sheets.first?.dragBehavior == .remembers)

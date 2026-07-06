@@ -82,6 +82,10 @@ struct CheatsheetDetailView: View {
                         }
                     }
                 }
+                Toggle("Keep start page loaded", isOn: $sheet.keepsStartPageLoaded)
+                Text("Opens instantly by keeping the start page decoded in memory at all times. Increases idle memory usage by roughly the size of that page's media.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 displayPicker
             }
 

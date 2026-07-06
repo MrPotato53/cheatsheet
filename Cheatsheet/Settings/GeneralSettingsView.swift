@@ -6,6 +6,7 @@ struct GeneralSettingsView: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var launchAtLoginError: String?
     @AppStorage("dismissWithEsc") private var dismissWithEsc = true
+    @AppStorage("dockIconPolicy") private var dockIconPolicy = DockIconPolicy.whenSettingsOpen.rawValue
 
     var body: some View {
         Form {
@@ -22,6 +23,14 @@ struct GeneralSettingsView: View {
             }
             Section {
                 Toggle("Dismiss overlay with Escape", isOn: $dismissWithEsc)
+                Picker("Dock Icon", selection: $dockIconPolicy) {
+                    ForEach(DockIconPolicy.allCases) { policy in
+                        Text(policy.label).tag(policy.rawValue)
+                    }
+                }
+                .onChange(of: dockIconPolicy) { _, _ in
+                    AppModel.shared.applyDockIconPolicy()
+                }
             }
             Section {
                 LabeledContent("Pin/unpin current cheatsheet") {
