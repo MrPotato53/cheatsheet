@@ -84,6 +84,8 @@ struct OverlayContentView: View {
                 .strokeBorder(.separator, lineWidth: 1)
         )
         .onHover { isHovering = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("overlay.root")
     }
 
     private var dragHandle: some View {
@@ -111,6 +113,7 @@ struct OverlayContentView: View {
                 .frame(width: 18, height: 18)
         }
         .buttonStyle(.borderless)
+        .accessibilityIdentifier("overlay.pin")
         .padding(5)
         .background(.thinMaterial, in: Circle())
         .padding(8)
@@ -127,10 +130,12 @@ struct OverlayContentView: View {
                 Image(systemName: "chevron.left")
             }
             .disabled(session.pageIndex == 0)
+            .accessibilityIdentifier("overlay.previousPage")
 
             Text("\(session.pageIndex + 1) / \(session.pages.count)")
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("overlay.pageLabel")
 
             Button {
                 controller.goToNextPage(in: session)
@@ -138,6 +143,7 @@ struct OverlayContentView: View {
                 Image(systemName: "chevron.right")
             }
             .disabled(session.pageIndex >= session.pages.count - 1)
+            .accessibilityIdentifier("overlay.nextPage")
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 14)
