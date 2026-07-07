@@ -17,6 +17,7 @@ struct CheatsheetDetailView: View {
             Section("Name") {
                 TextField("Name", text: $sheet.name)
                     .labelsHidden()
+                    .accessibilityIdentifier("detail.name")
             }
 
             // Page reordering lives solely in the preview gallery below;
@@ -65,11 +66,13 @@ struct CheatsheetDetailView: View {
                     }
                 }
                 .pickerStyle(.radioGroup)
+                .accessibilityIdentifier("detail.activation")
                 Picker("Open Cheatsheet to", selection: startPageChoice) {
                     Text("First page").tag(StartPageChoice.first)
                     Text("Last viewed page").tag(StartPageChoice.lastViewed)
                     Text("Specific page").tag(StartPageChoice.fixed)
                 }
+                .accessibilityIdentifier("detail.startPage")
                 if case .fixed = sheet.startPage {
                     let pages = store.pages(for: sheet)
                     Picker("Page", selection: fixedPageIndex) {
@@ -81,8 +84,10 @@ struct CheatsheetDetailView: View {
                             }
                         }
                     }
+                    .accessibilityIdentifier("detail.fixedPage")
                 }
                 Toggle("Keep start page loaded", isOn: $sheet.keepsStartPageLoaded)
+                    .accessibilityIdentifier("detail.keepStartPageLoaded")
                 Text("Opens instantly by keeping the start page decoded in memory at all times. Increases idle memory usage by roughly the size of that page's media.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -100,6 +105,7 @@ struct CheatsheetDetailView: View {
                             Text("100%")
                         }
                         .frame(maxWidth: 260)
+                        .accessibilityIdentifier("detail.sizeSlider")
                         Text(sheet.previewScale.formatted(.percent.precision(.fractionLength(0))))
                             .font(.body.monospacedDigit())
                             .foregroundStyle(.secondary)
@@ -114,14 +120,24 @@ struct CheatsheetDetailView: View {
                             sheet.position = .center
                         }
                         .disabled(sheet.position == .center)
+                        .accessibilityIdentifier("detail.center")
                     }
                     .frame(maxWidth: .infinity)
                 }
-                geometryBehaviorPicker("Cheatsheet Dragging", selection: $sheet.dragBehavior)
-                geometryBehaviorPicker("Cheatsheet Resizing", selection: $sheet.resizeBehavior)
+                geometryBehaviorPicker(
+                    "Cheatsheet Dragging",
+                    selection: $sheet.dragBehavior,
+                    identifier: "detail.dragBehavior"
+                )
+                geometryBehaviorPicker(
+                    "Cheatsheet Resizing",
+                    selection: $sheet.resizeBehavior,
+                    identifier: "detail.resizeBehavior"
+                )
                 Button("Preview on Screen") {
                     overlay.show(sheet)
                 }
+                .accessibilityIdentifier("detail.previewOnScreen")
             }
 
             Section {
@@ -130,6 +146,7 @@ struct CheatsheetDetailView: View {
                 }
                 .foregroundStyle(.red)
                 .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("detail.delete")
             }
         }
         .formStyle(.grouped)
@@ -202,9 +219,13 @@ struct CheatsheetDetailView: View {
         .frame(height: 29)
     }
 
-    private func geometryBehaviorPicker(_ title: String, selection: Binding<GeometryBehavior>) -> some View {
+    private func geometryBehaviorPicker(
+        _ title: String,
+        selection: Binding<GeometryBehavior>,
+        identifier: String
+    ) -> some View {
         LabeledContent(title) {
-            BehaviorPopUpButton(selection: selection)
+            BehaviorPopUpButton(selection: selection, identifier: identifier)
         }
     }
 
@@ -380,6 +401,7 @@ struct CheatsheetDetailView: View {
 /// any constrained width.
 private struct BehaviorPopUpButton: NSViewRepresentable {
     @Binding var selection: GeometryBehavior
+    let identifier: String
 
     private static let options: [(behavior: GeometryBehavior, title: String)] = [
         (.locked, "Don't allow"),
@@ -397,6 +419,7 @@ private struct BehaviorPopUpButton: NSViewRepresentable {
         button.target = context.coordinator
         button.action = #selector(Coordinator.selectionChanged(_:))
         button.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        button.setAccessibilityIdentifier(identifier)
         return button
     }
 

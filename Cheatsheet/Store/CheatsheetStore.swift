@@ -17,10 +17,23 @@ final class CheatsheetStore {
     init(rootDirectory: URL? = nil) {
         if let rootDirectory {
             rootURL = rootDirectory
+        } else if let testRoot = UITestMode.storeRoot {
+            // UI test runs get a clean, run-scoped library so they never touch
+            // (or depend on) the developer's real cheatsheets.
+            rootURL = testRoot
         } else {
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             rootURL = base.appendingPathComponent("Cheatsheet", isDirectory: true)
         }
+        #if DEBUG
+        if rootDirectory == nil, UITestMode.isActive {
+            UITestSeeder.seed(
+                rootURL: rootURL,
+                mediaRoot: rootURL.appendingPathComponent("Media", isDirectory: true),
+                libraryURL: rootURL.appendingPathComponent("library.json")
+            )
+        }
+        #endif
         try? FileManager.default.createDirectory(at: mediaRoot, withIntermediateDirectories: true)
         load()
     }

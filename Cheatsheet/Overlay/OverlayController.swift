@@ -148,6 +148,9 @@ final class OverlayController {
         session.screen = screen
 
         let panel = session.panel
+        // Not drawn (borderless), but lets accessibility clients — including
+        // UI tests — find the overlay window by its sheet's name.
+        panel.title = sheet.name
         panel.keyHandler = { [weak self, weak session] event in
             guard let self, let session else { return false }
             return self.handleKeyEvent(event, in: session)
@@ -634,7 +637,7 @@ final class OverlayController {
             goToNextPage(in: session)
             return true
         case 53: // escape
-            let escapeEnabled = UserDefaults.standard.object(forKey: "dismissWithEsc") as? Bool ?? true
+            let escapeEnabled = AppDefaults.store.object(forKey: "dismissWithEsc") as? Bool ?? true
             guard escapeEnabled else { return false }
             // Pinned overlays ignore Escape (swallow it to avoid the beep).
             if !session.isPinned {

@@ -109,6 +109,7 @@ struct CheatsheetsSettingsView: View {
                     Image(systemName: "plus")
                         .frame(width: 20, height: 20)
                 }
+                .accessibilityIdentifier("sheets.add")
                 Button {
                     pendingDeletion = selectedSheet
                     isDeleteConfirmationPresented = true
@@ -117,6 +118,7 @@ struct CheatsheetsSettingsView: View {
                         .frame(width: 20, height: 20)
                 }
                 .disabled(selectedSheet == nil)
+                .accessibilityIdentifier("sheets.remove")
                 Spacer()
             }
             .buttonStyle(.borderless)

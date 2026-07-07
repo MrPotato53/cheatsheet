@@ -46,6 +46,8 @@ struct PositionPreviewView: View {
         .aspectRatio(screenAspect, contentMode: .fit)
         .frame(maxWidth: 320, maxHeight: 240)
         .help("Drag the red box to choose where this cheatsheet appears on screen")
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("detail.positionPreview")
     }
 
     /// Mirrors the configured target display's shape, so a portrait monitor

@@ -31,7 +31,7 @@ final class AppModel {
     }
 
     static var dockIconPolicy: DockIconPolicy {
-        DockIconPolicy(rawValue: UserDefaults.standard.string(forKey: "dockIconPolicy") ?? "") ?? .whenSettingsOpen
+        DockIconPolicy(rawValue: AppDefaults.store.string(forKey: "dockIconPolicy") ?? "") ?? .whenSettingsOpen
     }
 
     func applyDockIconPolicy() {
@@ -133,7 +133,91 @@ final class AppModel {
             NSApp.windows.first {
                 $0.identifier?.rawValue.contains(WindowID.settings) == true
             }?.performClose(nil)
+        } else if action == "dockReopen" {
+            // Exercises the Dock-click delegate path without LaunchServices.
+            // Mirrors AppKit's notion of "visible windows": ordinary windows
+            // only — panels (overlays) and the status item's window excluded.
+            let hasVisibleWindows = NSApp.windows.contains {
+                $0.isVisible && !($0 is NSPanel) && $0.canBecomeMain
+            }
+            if let delegate = NSApp.delegate as? AppDelegate {
+                _ = delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: hasVisibleWindows)
+            }
+        } else if action.hasPrefix("keyDown:"), let index = Int(action.dropFirst(8)), store.sheets.indices.contains(index) {
+            // Global hotkeys (Carbon) can't be synthesized reliably from
+            // XCUITest; drive the layer just below them.
+            hotkeys.handleKeyDown(sheetID: store.sheets[index].id)
+        } else if action.hasPrefix("keyUp:"), let index = Int(action.dropFirst(6)), store.sheets.indices.contains(index) {
+            hotkeys.handleKeyUp(sheetID: store.sheets[index].id)
+        } else if action.hasPrefix("state:") {
+            postDebugState(nonce: String(action.dropFirst(6)))
         }
+    }
+
+    /// Replies to a "state:<nonce>" debug request with a JSON snapshot of app
+    /// state the UI test runner can't observe through accessibility alone:
+    /// activation policy, window key status, overlay panel frames in AppKit
+    /// screen coordinates, and the persisted per-sheet configuration.
+    private func postDebugState(nonce: String) {
+        func rect(_ r: NSRect) -> [Double] { [r.minX, r.minY, r.width, r.height] }
+
+        let settingsWindows = NSApp.windows.filter {
+            $0.identifier?.rawValue.contains(WindowID.settings) == true
+        }
+        var payload: [String: Any] = [
+            "nonce": nonce,
+            "activationPolicy": NSApp.activationPolicy() == .regular ? "regular" : "accessory",
+            "appIsActive": NSApp.isActive,
+            "settingsWindowCount": settingsWindows.count,
+            "settingsVisible": settingsWindows.contains { $0.isVisible },
+            "settingsIsKey": settingsWindows.contains { $0.isKeyWindow },
+            "dismissWithEsc": AppDefaults.store.object(forKey: "dismissWithEsc") as? Bool ?? true,
+            "dockIconPolicy": Self.dockIconPolicy.rawValue,
+        ]
+        payload["sessions"] = overlay.sessions.map { session -> [String: Any] in
+            var info: [String: Any] = [
+                "name": session.sheet.name,
+                "pageIndex": session.pageIndex,
+                "pageCount": session.pages.count,
+                "isPinned": session.isPinned,
+                "isLoading": session.isLoadingPages,
+                "isVisible": session.panel.isVisible,
+                "isKey": session.panel.isKeyWindow,
+                "isMovable": session.panel.isMovableByWindowBackground,
+                "isResizable": session.panel.styleMask.contains(.resizable),
+                "frame": rect(session.panel.frame),
+            ]
+            if let visible = (session.panel.screen ?? session.screen)?.visibleFrame {
+                info["screenVisibleFrame"] = rect(visible)
+            }
+            return info
+        }
+        payload["sheets"] = store.sheets.map { sheet -> [String: Any] in
+            let startPage: String
+            switch sheet.startPage {
+            case .first: startPage = "first"
+            case .lastViewed: startPage = "lastViewed"
+            case .fixed(let index): startPage = "fixed:\(index)"
+            }
+            return [
+                "name": sheet.name,
+                "previewScale": sheet.previewScale,
+                "position": [sheet.position.x, sheet.position.y],
+                "dragBehavior": sheet.dragBehavior.rawValue,
+                "resizeBehavior": sheet.resizeBehavior.rawValue,
+                "activation": sheet.activation.rawValue,
+                "startPage": startPage,
+                "keepsStartPageLoaded": sheet.keepsStartPageLoaded,
+                "fileCount": sheet.files.count,
+            ]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name("potatodev.cheatsheet.debug.state"),
+            object: String(data: data, encoding: .utf8),
+            userInfo: nil,
+            deliverImmediately: true
+        )
     }
     #endif
 }
