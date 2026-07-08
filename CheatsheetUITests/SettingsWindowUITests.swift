@@ -72,6 +72,44 @@ final class SettingsWindowUITests: CheatsheetUITestCase {
     }
 
     @MainActor
+    func testReopenRestoresMinimizedSettingsWindow() throws {
+        // Dock icon always present so there's an icon to "click".
+        launchApp(defaults: ["dockIconPolicy": "always"])
+        openSettingsFromMenuBar()
+        waitForState("settings open") { $0.settingsVisible }
+
+        // Minimize into the Dock: the window still exists but isn't visible.
+        postDebug("minimizeSettings")
+        waitForState("settings minimized") { state in
+            state.settingsMiniaturized && !state.settingsVisible && state.settingsWindowCount == 1
+        }
+
+        // A Dock click must deminiaturize and refocus it, not spawn a second
+        // window or leave it stuck in the Dock.
+        reopenFromDock()
+        waitForState(timeout: 10, "minimized settings restored by Dock reopen") { state in
+            state.settingsVisible && !state.settingsMiniaturized
+                && state.settingsIsKey && state.settingsWindowCount == 1
+        }
+    }
+
+    @MainActor
+    func testMenuBarRestoresMinimizedSettingsWindow() throws {
+        launchApp()
+        openSettingsFromMenuBar()
+        waitForState("settings open") { $0.settingsVisible }
+
+        postDebug("minimizeSettings")
+        waitForState("settings minimized") { $0.settingsMiniaturized && !$0.settingsVisible }
+
+        // Menu "Settings…" also restores rather than opening a duplicate.
+        clickStatusMenuItem("Settings…")
+        waitForState("minimized settings restored from the menu bar") { state in
+            state.settingsVisible && !state.settingsMiniaturized && state.settingsWindowCount == 1
+        }
+    }
+
+    @MainActor
     func testCloseSettingsDropsDockIconAndReopensCleanly() throws {
         launchApp() // default policy: dock icon only while settings is open
         openSettingsFromMenuBar()

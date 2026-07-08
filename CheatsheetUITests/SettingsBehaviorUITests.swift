@@ -56,11 +56,13 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         launchApp(sheets: [threePageSheet()])
         openSettingsFromMenuBar()
 
-        let toggle = settingsWindow.checkBoxes["general.dismissWithEsc"]
+        let toggle = settingsWindow.switches["general.dismissWithEsc"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
         toggle.click() // off
         waitForState("dismissWithEsc off") { !$0.dismissWithEsc }
 
+        // With Escape disabled the setting is read live, so an already-open
+        // overlay survives Escape.
         openOverlayFromMenu("Alpha")
         overlayContent().click() // make the overlay panel key again
         app.typeKey(.escape, modifierFlags: [])
@@ -68,8 +70,20 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
             state.session(named: "Alpha")?.isVisible == true
         }
 
-        toggle.click() // back on
+        // Flip it back on. The overlay is a floating status-bar panel; while
+        // it exists, XCUITest can't hit-test settings controls beneath the app
+        // — so dismiss it first, then a freshly opened overlay honors Escape,
+        // proving the toggle took effect without a relaunch.
+        hideAllOverlays()
+        postDebug("openSettings")
+        waitForState("settings refocused before re-toggling") { $0.settingsIsKey }
+        // A plain .click() reports the switch as "not hittable" here (an
+        // XCUITest quirk after the overlay/key-window churn); a coordinate
+        // click lands on the same on-screen point regardless.
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click() // back on
         waitForState("dismissWithEsc on") { $0.dismissWithEsc }
+
+        openOverlayFromMenu("Alpha")
         overlayContent().click()
         app.typeKey(.escape, modifierFlags: [])
         waitForState("overlay dismissed once re-enabled") { $0.sessions.isEmpty }
@@ -82,7 +96,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         launchApp()
         openSettingsFromMenuBar()
 
-        let toggle = settingsWindow.checkBoxes["general.launchAtLogin"]
+        let toggle = settingsWindow.switches["general.launchAtLogin"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
         XCTAssertEqual(toggle.value as? Int, 0, "launch at login should start off in test mode")
         toggle.click()
@@ -253,7 +267,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         launchApp(sheets: [threePageSheet()])
         openCheatsheetsTab()
 
-        let toggle = settingsWindow.checkBoxes["detail.keepStartPageLoaded"]
+        let toggle = settingsWindow.switches["detail.keepStartPageLoaded"]
         scrollIntoView(toggle, in: settingsWindow)
         toggle.click()
         waitForState("keep-start-page-loaded persisted") { state in
@@ -403,8 +417,12 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         selectSheetInSidebar("Alpha")
 
         settingsWindow.buttons["sheets.remove"].click()
-        let confirm = app.buttons["Delete “Alpha”"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "delete confirmation button not found")
+        // Match the confirmation button by label as a query. The label
+        // subscript (app.buttons["…"]) also pulls in a non-clickable Touch Bar
+        // mirror; a predicate query resolves to just the on-screen button.
+        let confirmMatches = app.buttons.matching(NSPredicate(format: "label == %@", "Delete “Alpha”"))
+        XCTAssertTrue(confirmMatches.firstMatch.waitForExistence(timeout: 5), "delete confirmation button not found")
+        let confirm = confirmMatches.allElementsBoundByIndex.first { $0.isHittable } ?? confirmMatches.firstMatch
         confirm.click()
 
         waitForState("sheet removed from the store") { $0.sheets.map(\.name) == ["Beta"] }

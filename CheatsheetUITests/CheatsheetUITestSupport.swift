@@ -97,10 +97,15 @@ struct AppState: Decodable {
     }
 
     let nonce: String
+    /// The CHEATSHEET_TEST_RUN the responding app was launched with. Empty for
+    /// a foreign DEBUG instance (e.g. one run from Xcode); the runner drops any
+    /// reply whose runID isn't the one it launched.
+    let runID: String
     let activationPolicy: String
     let appIsActive: Bool
     let settingsWindowCount: Int
     let settingsVisible: Bool
+    let settingsMiniaturized: Bool
     let settingsIsKey: Bool
     let dismissWithEsc: Bool
     let dockIconPolicy: String
@@ -117,6 +122,10 @@ class CheatsheetUITestCase: XCTestCase {
     static let bundleID = "potatodev.Cheatsheet"
 
     private(set) var app: XCUIApplication!
+    /// The run identifier passed to the app under test. State replies are
+    /// filtered to this so a foreign DEBUG instance on the machine can't
+    /// pollute the snapshot (its replies carry a different, or empty, runID).
+    private var runID: String?
     private let debugChannel = Notification.Name("potatodev.cheatsheet.debug")
     private let stateChannel = Notification.Name("potatodev.cheatsheet.debug.state")
 
@@ -137,7 +146,9 @@ class CheatsheetUITestCase: XCTestCase {
     func launchApp(sheets: [SeedSheet] = [], defaults: [String: Any] = [:]) -> XCUIApplication {
         clearSavedWindowState()
         let application = XCUIApplication()
-        application.launchEnvironment["CHEATSHEET_TEST_RUN"] = UUID().uuidString
+        let runID = UUID().uuidString
+        self.runID = runID
+        application.launchEnvironment["CHEATSHEET_TEST_RUN"] = runID
         if !sheets.isEmpty {
             application.launchEnvironment["CHEATSHEET_TEST_SEED"] = Self.jsonString(sheets.map(\.json))
         }
@@ -242,15 +253,33 @@ class CheatsheetUITestCase: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        container.hover()
-        for _ in 0..<15 where !(element.exists && element.isHittable) {
-            container.scroll(byDeltaX: 0, deltaY: -60)
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        // The grouped Form is backed by an inner NSScrollView; a scroll gesture
+        // on the window itself doesn't move it (verified — the wheel has to
+        // land on the scroll view). Target the tallest scroll view in the
+        // container, which is the detail form's own scroller.
+        let scroller = container.scrollViews.allElementsBoundByIndex
+            .max { $0.frame.height < $1.frame.height } ?? container
+        scroller.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
+        // Require the element to be *fully* within the viewport, not merely
+        // center-hittable: a control clipped at the bottom edge (e.g. the drag
+        // preview) is hittable at its center yet a drag off it exits the
+        // scroll view. Fall back to plain hittability for elements taller than
+        // the viewport, which can never be fully contained.
+        let margin: CGFloat = 12
+        func settled() -> Bool {
+            guard element.exists, element.isHittable else { return false }
+            let e = element.frame, s = scroller.frame
+            if e.height >= s.height - margin * 2 { return true }
+            return e.minY >= s.minY + margin && e.maxY <= s.maxY - margin
         }
-        // Overshot or the element is above the viewport: try the other way.
-        for _ in 0..<15 where !(element.exists && element.isHittable) {
-            container.scroll(byDeltaX: 0, deltaY: 60)
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        for _ in 0..<25 where !settled() {
+            scroller.scroll(byDeltaX: 0, deltaY: -80)
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+        }
+        // Overshot or the element started above the viewport: try the other way.
+        for _ in 0..<25 where !settled() {
+            scroller.scroll(byDeltaX: 0, deltaY: 80)
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
         }
         XCTAssertTrue(
             element.exists && element.isHittable,
@@ -262,10 +291,16 @@ class CheatsheetUITestCase: XCTestCase {
 
     // MARK: Debug channel
 
+    /// Addresses a debug command to the launched app only (see the app-side
+    /// driver): "command@@runID". Foreign DEBUG instances ignore it.
+    private func scoped(_ action: String) -> String {
+        runID.map { "\(action)@@\($0)" } ?? action
+    }
+
     func postDebug(_ action: String) {
         DistributedNotificationCenter.default().postNotificationName(
             debugChannel,
-            object: action,
+            object: scoped(action),
             userInfo: nil,
             deliverImmediately: true
         )
@@ -280,12 +315,16 @@ class CheatsheetUITestCase: XCTestCase {
             guard
                 let json = note.object as? String,
                 let state = try? JSONDecoder().decode(AppState.self, from: Data(json.utf8)),
-                state.nonce == nonce
+                state.nonce == nonce,
+                // Ignore replies from any other app instance (foreign DEBUG
+                // builds answer this channel too); accept only the launch we
+                // started. Before launch (nil runID) accept any to probe.
+                self.runID == nil || state.runID == self.runID
             else { return }
             result = state
         }
         defer { center.removeObserver(token) }
-        center.postNotificationName(debugChannel, object: "state:\(nonce)", userInfo: nil, deliverImmediately: true)
+        center.postNotificationName(debugChannel, object: scoped("state:\(nonce)"), userInfo: nil, deliverImmediately: true)
         let deadline = Date(timeIntervalSinceNow: timeout)
         while result == nil, Date() < deadline {
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
@@ -398,6 +437,21 @@ class CheatsheetUITestCase: XCTestCase {
     /// itself isn't exposed as an accessibility window).
     func overlayContent() -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: "overlay.root").firstMatch
+    }
+
+    /// The pin button (and drag grip) only render while the overlay is hovered
+    /// — at zero opacity SwiftUI drops the pin from the accessibility tree.
+    /// Move the pointer onto the overlay so those controls become reachable.
+    @discardableResult
+    func revealOverlayPin(file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        let content = overlayContent()
+        XCTAssertTrue(content.waitForExistence(timeout: 5), "overlay content not found", file: file, line: line)
+        let pin = app.buttons["overlay.pin"]
+        // Hover can be missed if the pointer was already at that point; retry.
+        for _ in 0..<5 where !pin.waitForExistence(timeout: 1) {
+            content.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
+        }
+        return pin
     }
 
     @discardableResult

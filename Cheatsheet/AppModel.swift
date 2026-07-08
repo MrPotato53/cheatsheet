@@ -61,10 +61,13 @@ final class AppModel {
         focusSettingsSoon()
     }
 
-    /// Window creation is asynchronous; retry focusing until it exists.
+    /// Window creation is asynchronous; retry focusing until it exists. The
+    /// budget is generous (≈3s) because the very first settings open on a cold
+    /// launch can take well over half a second to materialize the scene, and
+    /// giving up early leaves the window open but unfocused.
     func focusSettingsSoon() {
         Task { @MainActor in
-            for _ in 0..<10 {
+            for _ in 0..<60 {
                 if self.showSettingsWindow() { return }
                 try? await Task.sleep(for: .milliseconds(50))
             }
@@ -76,6 +79,11 @@ final class AppModel {
         guard let window = NSApp.windows.first(where: {
             $0.identifier?.rawValue.contains(WindowID.settings) == true
         }) else { return false }
+        // makeKeyAndOrderFront does not restore a minimized window, so a Dock
+        // click or menu "Settings…" would otherwise leave it stuck in the Dock.
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
         return true
@@ -107,20 +115,35 @@ final class AppModel {
     /// Test hook: lets scripts drive the app for memory studies, e.g.
     ///   action "show:0", "hide", "openSettings", "closeSettings"
     /// posted as distributed notifications named potatodev.cheatsheet.debug.
+    ///
+    /// Under UI tests the runner appends "@@<runID>" so only the app it
+    /// launched acts on a command — a foreign DEBUG instance (a developer's
+    /// app, or another test's app) sharing this broadcast channel ignores it.
     private func setUpDebugDriver() {
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("potatodev.cheatsheet.debug"),
             object: nil,
             queue: .main
         ) { notification in
-            let action = (notification.object as? String) ?? ""
+            let raw = (notification.object as? String) ?? ""
             Task { @MainActor in
-                AppModel.shared.handleDebugAction(action)
+                AppModel.shared.handleDebugAction(raw)
             }
         }
     }
 
-    private func handleDebugAction(_ action: String) {
+    private func handleDebugAction(_ raw: String) {
+        let action: String
+        if UITestMode.isActive {
+            // Test posts are run-scoped ("command@@runID"); accept only ours.
+            let parts = raw.components(separatedBy: "@@")
+            guard parts.count == 2, parts[1] == UITestMode.runID else { return }
+            action = parts[0]
+        } else {
+            // Memory-study scripts drive a normally-launched app with bare
+            // commands; run-scoped test posts don't match and are ignored.
+            action = raw
+        }
         if action.hasPrefix("show:"), let index = Int(action.dropFirst(5)), store.sheets.indices.contains(index) {
             overlay.show(store.sheets[index])
         } else if action == "hide" {
@@ -133,6 +156,10 @@ final class AppModel {
             NSApp.windows.first {
                 $0.identifier?.rawValue.contains(WindowID.settings) == true
             }?.performClose(nil)
+        } else if action == "minimizeSettings" {
+            NSApp.windows.first {
+                $0.identifier?.rawValue.contains(WindowID.settings) == true
+            }?.miniaturize(nil)
         } else if action == "dockReopen" {
             // Exercises the Dock-click delegate path without LaunchServices.
             // Mirrors AppKit's notion of "visible windows": ordinary windows
@@ -140,9 +167,11 @@ final class AppModel {
             let hasVisibleWindows = NSApp.windows.contains {
                 $0.isVisible && !($0 is NSPanel) && $0.canBecomeMain
             }
-            if let delegate = NSApp.delegate as? AppDelegate {
-                _ = delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: hasVisibleWindows)
-            }
+            // Invoke the *installed* delegate, not our concrete AppDelegate:
+            // under the SwiftUI lifecycle NSApp.delegate is SwiftUI's own
+            // delegate (which forwards to AppDelegate), so `as? AppDelegate`
+            // is nil. Calling through it reproduces a real reopen faithfully.
+            _ = NSApp.delegate?.applicationShouldHandleReopen?(NSApp, hasVisibleWindows: hasVisibleWindows)
         } else if action.hasPrefix("keyDown:"), let index = Int(action.dropFirst(8)), store.sheets.indices.contains(index) {
             // Global hotkeys (Carbon) can't be synthesized reliably from
             // XCUITest; drive the layer just below them.
@@ -166,10 +195,17 @@ final class AppModel {
         }
         var payload: [String: Any] = [
             "nonce": nonce,
+            // Scopes the reply to the launch that requested it. Another DEBUG
+            // instance on the machine (e.g. an app run straight from Xcode)
+            // also answers this distributed channel; without a run tag its
+            // empty snapshot races and clobbers the real one. The runner
+            // filters on this, so foreign replies are ignored.
+            "runID": UITestMode.runID ?? "",
             "activationPolicy": NSApp.activationPolicy() == .regular ? "regular" : "accessory",
             "appIsActive": NSApp.isActive,
             "settingsWindowCount": settingsWindows.count,
             "settingsVisible": settingsWindows.contains { $0.isVisible },
+            "settingsMiniaturized": settingsWindows.contains { $0.isMiniaturized },
             "settingsIsKey": settingsWindows.contains { $0.isKeyWindow },
             "dismissWithEsc": AppDefaults.store.object(forKey: "dismissWithEsc") as? Bool ?? true,
             "dockIconPolicy": Self.dockIconPolicy.rawValue,

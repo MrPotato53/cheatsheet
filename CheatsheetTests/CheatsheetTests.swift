@@ -244,4 +244,37 @@ struct CheatsheetStoreTests {
         let decoded = try JSONDecoder().decode([DisplayTarget].self, from: data)
         #expect(decoded == targets)
     }
+
+    // Escape on an open overlay dismisses only when dismissal is enabled and
+    // the overlay isn't pinned; the key handler swallows the event either way
+    // (so a disabled/pinned overlay no longer beeps).
+    @Test func escapeDismissesOnlyWhenEnabledAndUnpinned() {
+        #expect(OverlayController.escapeShouldDismiss(dismissEnabled: true, isPinned: false))
+        #expect(!OverlayController.escapeShouldDismiss(dismissEnabled: true, isPinned: true))
+        #expect(!OverlayController.escapeShouldDismiss(dismissEnabled: false, isPinned: false))
+        #expect(!OverlayController.escapeShouldDismiss(dismissEnabled: false, isPinned: true))
+    }
+
+    // The open overlay rebuilds its page list (parsing PDFs) only when a
+    // page-affecting field changes — not on size/position/name edits, which
+    // fire on every size-slider tick.
+    @Test func pageInputsDifferOnlyForPageAffectingEdits() {
+        var base = Cheatsheet(name: "S")
+        base.files = ["a.png", "b.pdf"]
+
+        var scaled = base; scaled.previewScale = 0.9
+        var moved = base; moved.position = RelativePosition(x: 0.2, y: 0.8)
+        var renamed = base; renamed.name = "T"
+        #expect(!OverlayController.pageInputsDiffer(base, base))
+        #expect(!OverlayController.pageInputsDiffer(base, scaled))
+        #expect(!OverlayController.pageInputsDiffer(base, moved))
+        #expect(!OverlayController.pageInputsDiffer(base, renamed))
+
+        var added = base; added.files = ["a.png", "b.pdf", "c.png"]
+        var rotated = base; rotated.rotation = .deg90
+        var reordered = base; reordered.pageOrder = [PageRef(file: "b.pdf", pdfPageIndex: 0)]
+        #expect(OverlayController.pageInputsDiffer(base, added))
+        #expect(OverlayController.pageInputsDiffer(base, rotated))
+        #expect(OverlayController.pageInputsDiffer(base, reordered))
+    }
 }

@@ -82,7 +82,7 @@ final class OverlayUITests: CheatsheetUITestCase {
         launchApp(sheets: [threePageSheet()])
         openOverlayFromMenu("Alpha")
 
-        let pin = app.buttons["overlay.pin"]
+        let pin = revealOverlayPin()
         XCTAssertTrue(pin.waitForExistence(timeout: 5))
         pin.click()
         waitForState("session pinned") { $0.session(named: "Alpha")?.isPinned == true }
@@ -115,7 +115,7 @@ final class OverlayUITests: CheatsheetUITestCase {
         waitForState("transient Alpha replaced by Beta") { $0.sessions.map(\.name) == ["Beta"] }
 
         // Pin Beta, then open Alpha: both stay on screen.
-        let pin = app.buttons["overlay.pin"]
+        let pin = revealOverlayPin()
         XCTAssertTrue(pin.waitForExistence(timeout: 5))
         pin.click()
         waitForState("Beta pinned") { $0.session(named: "Beta")?.isPinned == true }
