@@ -48,6 +48,16 @@ DEBUG-only hooks (all inert in release builds):
   visibility/key status, overlay sessions (page index/count, pin, panel frame
   and screen visible frame in AppKit coordinates), and persisted per-sheet
   config. Tests assert against this instead of scraping accessibility frames.
+- **Run scoping**: distributed notifications broadcast to *every* process, so
+  any other DEBUG build on the machine (e.g. the app run straight from Xcode)
+  also answers this channel. Left unscoped, its empty state snapshot races and
+  clobbers the real one, and its windows respond to `dockReopen`. So in test
+  mode the runner tags every command `command@@<runID>` and the app acts only
+  on its own run; state replies also carry `runID` and the runner drops any
+  that don't match. Tests are therefore robust to a stray DEBUG instance —
+  but LaunchServices `open` still can't disambiguate two apps that share a
+  bundle ID, so `reopenFromDock` may target the wrong one; prefer the
+  `dockReopen` debug action, and don't leave a second instance running.
 
 Real Dock-icon clicks are simulated by `open`-ing the running app bundle,
 which delivers the same reopen Apple event through LaunchServices.
@@ -62,13 +72,14 @@ which delivers the same reopen Apple event through LaunchServices.
 | `SettingsBehaviorUITests.swift` | Every setting's outcome: Dock icon policy picker, Escape toggle, launch-at-login toggle (stubbed), rename, activation mode, start page (first/last-viewed/fixed), size slider (live + persisted), position preview drag + Center, drag behavior locked/resets/remembers, resize behavior locked/remembers, delete |
 | `EdgeSnapUITests.swift` | Drag past screen edges → snap back fully on-screen; edge contact (top, side, corner) preserved across page aspect-ratio changes and across reopen |
 
-## Known limitations / intentionally-failing tests
+## Known limitations
 
-- **Edge-stick across aspect changes**: `EdgeSnapUITests` encodes the
-  intended behavior ("overlay keeps hugging the edge when the page aspect
-  changes"). The current geometry model stores a proportional *center*, so
-  when the next page is smaller on an axis the overlay drifts off that edge.
-  Those assertions are expected to fail until the model anchors edges.
+- **Edge-stick across aspect changes**: `EdgeSnapUITests` asserts the overlay
+  keeps hugging an edge when the page aspect changes. This is implemented:
+  when a drag/resize drops the panel against an edge, `normalizedCenter`
+  saturates that axis to 0/1 so the stored position pins to the edge for every
+  page size (see `OverlayController`), rather than storing a proportional
+  center that drifts inward once a narrower page is shown.
 - **File import** (`NSOpenPanel`) is a remote view service XCUITest cannot
   drive; adding files is covered by seeding + the store unit tests. Manual
   test: sidebar `+`, drag-and-drop onto the sidebar.

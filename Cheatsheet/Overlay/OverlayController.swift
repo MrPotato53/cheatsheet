@@ -384,9 +384,15 @@ final class OverlayController {
             if updated.previewScale != session.sheet.previewScale {
                 session.sessionScale = nil
             }
+            // Rebuilding pages parses PDFs (on the main thread); skip it unless
+            // an edit actually changed the page list. Size/position/behavior
+            // edits — e.g. every size-slider tick — leave the pages untouched.
+            let rebuildPages = Self.pageInputsDiffer(session.sheet, updated)
             session.update(sheet: updated)
-            session.pages = store.pages(for: updated)
-            session.pageIndex = min(session.pageIndex, max(session.pages.count - 1, 0))
+            if rebuildPages {
+                session.pages = store.pages(for: updated)
+                session.pageIndex = min(session.pageIndex, max(session.pages.count - 1, 0))
+            }
             // Keep the panel on whichever screen it currently occupies (the
             // user may have dragged it to another monitor); re-resolving the
             // configured target here would teleport it back mid-session.
@@ -396,6 +402,13 @@ final class OverlayController {
             updateFrame(for: session, animated: false)
         }
         warmStartPages()
+    }
+
+    /// Pages are derived only from the files, the page order (which carries
+    /// per-page rotation/flip/hidden), and the sheet's default rotation. Other
+    /// edits (scale, position, drag/resize behavior, name…) don't affect them.
+    static func pageInputsDiffer(_ a: Cheatsheet, _ b: Cheatsheet) -> Bool {
+        a.files != b.files || a.pageOrder != b.pageOrder || a.rotation != b.rotation
     }
 
     private func applyGeometryBehaviors(to session: OverlaySession) {
@@ -421,9 +434,11 @@ final class OverlayController {
         let maxSize = CGSize(width: visible.width * scale, height: visible.height * scale)
         let size = fittedPanelSize(maxSize: maxSize, session: session)
 
-        // Clamp by the fitted panel, not the max box: narrow media can then
-        // hug a screen edge; a wider page just slides inward enough to stay
-        // visible, and returns when the narrow page is shown again.
+        // Clamp by the fitted panel, not the max box, so a page of any aspect
+        // stays fully on screen. Positions saturated to 0/1 by normalizedCenter
+        // pin the panel flush to that edge here regardless of the fitted size,
+        // which is what keeps an edge-parked overlay hugging the edge across
+        // page-aspect changes.
         let position = session.sessionPosition ?? sheet.position
         let centerX = Self.clampedCenter(position.x, extent: visible.width, half: size.width / 2)
         let centerY = Self.clampedCenter(position.y, extent: visible.height, half: size.height / 2)
@@ -597,10 +612,25 @@ final class OverlayController {
         let visible = screen.visibleFrame
         guard visible.width > 0, visible.height > 0 else { return nil }
         let frame = session.panel.frame
-        return RelativePosition(
-            x: (frame.midX - visible.minX) / visible.width,
-            y: (frame.midY - visible.minY) / visible.height
-        )
+        var x = (frame.midX - visible.minX) / visible.width
+        var y = (frame.midY - visible.minY) / visible.height
+        // Edge anchoring: when the drop reaches (or overhangs) a screen edge,
+        // saturate that axis to the extreme so the position pins to the edge
+        // for every page. A plain proportional center is fitted-size-dependent
+        // — it holds a wide page against the edge but lets a later, narrower
+        // page drift inward, since the same fraction no longer clamps. The
+        // fill-width/height guard skips axes where the panel spans the screen
+        // (position is moot there and both edges would "touch").
+        let tolerance: CGFloat = 2
+        if frame.width < visible.width - tolerance {
+            if frame.maxX >= visible.maxX - tolerance { x = 1 }
+            else if frame.minX <= visible.minX + tolerance { x = 0 }
+        }
+        if frame.height < visible.height - tolerance {
+            if frame.maxY >= visible.maxY - tolerance { y = 1 }
+            else if frame.minY <= visible.minY + tolerance { y = 0 }
+        }
+        return RelativePosition(x: x, y: y)
     }
 
     // MARK: - Screen resolution
@@ -638,15 +668,22 @@ final class OverlayController {
             return true
         case 53: // escape
             let escapeEnabled = AppDefaults.store.object(forKey: "dismissWithEsc") as? Bool ?? true
-            guard escapeEnabled else { return false }
-            // Pinned overlays ignore Escape (swallow it to avoid the beep).
-            if !session.isPinned {
+            if Self.escapeShouldDismiss(dismissEnabled: escapeEnabled, isPinned: session.isPinned) {
                 hide(session)
             }
+            // Always swallow Escape while the overlay is key: returning false
+            // bubbles to an unhandled keyDown and beeps. Pinned overlays and
+            // the dismissal-disabled case both just consume it silently.
             return true
         default:
             return false
         }
+    }
+
+    /// Escape dismisses only when dismissal is enabled and the overlay isn't
+    /// pinned; the key handler swallows the event regardless (see above).
+    static func escapeShouldDismiss(dismissEnabled: Bool, isPinned: Bool) -> Bool {
+        dismissEnabled && !isPinned
     }
 }
 
