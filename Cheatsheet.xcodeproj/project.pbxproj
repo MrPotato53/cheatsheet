@@ -106,6 +106,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 01DA828A2FF76BB60093021F /* Build configuration list for PBXNativeTarget "Cheatsheet" */;
 			buildPhases = (
+				A1C09E4001760BB500930001 /* Generate icons from root PNGs */,
 				01DA82652FF76BB50093021F /* Sources */,
 				01DA82662FF76BB50093021F /* Frameworks */,
 				01DA82672FF76BB50093021F /* Resources */,
@@ -243,6 +244,36 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A1C09E4001760BB500930001 /* Generate icons from root PNGs */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/DockIcon.png",
+				"$(SRCROOT)/MenubarIcon.png",
+			);
+			name = "Generate icons from root PNGs";
+			outputPaths = (
+				"$(SRCROOT)/Cheatsheet/Assets.xcassets/AppIcon.appiconset/icon_16.png",
+				"$(SRCROOT)/Cheatsheet/Assets.xcassets/AppIcon.appiconset/icon_32.png",
+				"$(SRCROOT)/Cheatsheet/Assets.xcassets/AppIcon.appiconset/icon_64.png",
+				"$(SRCROOT)/Cheatsheet/Assets.xcassets/AppIcon.appiconset/icon_128.png",
+				"$(SRCROOT)/Cheatsheet/Assets.xcassets/AppIcon.appiconset/icon_256.png",
+				"$(SRCROOT)/Cheatsheet/Assets.xcassets/AppIcon.appiconset/icon_512.png",
+				"$(SRCROOT)/Cheatsheet/Assets.xcassets/AppIcon.appiconset/icon_1024.png",
+				"$(SRCROOT)/Cheatsheet/Assets.xcassets/MenubarIcon.imageset/menubar_18.png",
+				"$(SRCROOT)/Cheatsheet/Assets.xcassets/MenubarIcon.imageset/menubar_36.png",
+				"$(SRCROOT)/Cheatsheet/Assets.xcassets/MenubarIcon.imageset/menubar_54.png",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ -f \"${SRCROOT}/DockIcon.png\" ]; then\n  for px in 16 32 64 128 256 512 1024; do\n    /usr/bin/sips -z \"$px\" \"$px\" \"${SRCROOT}/DockIcon.png\" --out \"${SRCROOT}/Cheatsheet/Assets.xcassets/AppIcon.appiconset/icon_${px}.png\" >/dev/null\n  done\nfi\nif [ -f \"${SRCROOT}/MenubarIcon.png\" ]; then\n  for px in 18 36 54; do\n    /usr/bin/sips -z \"$px\" \"$px\" \"${SRCROOT}/MenubarIcon.png\" --out \"${SRCROOT}/Cheatsheet/Assets.xcassets/MenubarIcon.imageset/menubar_${px}.png\" >/dev/null\n  done\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 
 /* Begin PBXSourcesBuildPhase section */
 		01DA82652FF76BB50093021F /* Sources */ = {
