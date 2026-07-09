@@ -21,7 +21,10 @@ struct CheatsheetApp: App {
         MenuBarExtra {
             menuContent
         } label: {
-            Label("Cheatsheet", systemImage: "rectangle.stack")
+            // Template image sized at the menu-bar point size (18pt) via the
+            // catalog's @1x/@2x/@3x slots, so it renders at the right scale.
+            Image("MenubarIcon")
+                .accessibilityLabel("Cheatsheet")
                 .task {
                     // The label exists for the app's lifetime, so its
                     // environment is a safe place to capture openWindow for
