@@ -48,7 +48,8 @@ extension CheatsheetStore {
                 rotation: ref.rotation ?? sheet.rotation,
                 flipHorizontal: ref.flipHorizontal ?? false,
                 flipVertical: ref.flipVertical ?? false,
-                isHidden: isHidden
+                isHidden: isHidden,
+                showsRaw: sheet.rawFiles.contains(ref.file)
             )
         }
     }
@@ -119,7 +120,7 @@ extension CheatsheetStore {
                 return CGSize(width: height, height: width)
             }
             return CGSize(width: width, height: height)
-        case .markdown, .text, .unsupported:
+        case .markdown, .html, .text, .unsupported:
             return nil
         }
     }

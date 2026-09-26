@@ -17,7 +17,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
     @MainActor
     func testDockIconPolicyAlwaysAndNever() throws {
         launchApp()
-        openSettingsFromMenuBar()
+        openSettings()
         waitForState("regular while settings open (default policy)") { $0.activationPolicy == "regular" }
 
         let picker = settingsWindow.popUpButtons["general.dockIconPolicy"]
@@ -44,7 +44,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         launchApp() // default policy: whenSettingsOpen
         waitForState("accessory before settings opens") { $0.activationPolicy == "accessory" }
 
-        openSettingsFromMenuBar()
+        openSettings()
         waitForState("regular while settings open") { $0.activationPolicy == "regular" }
 
         postDebug("closeSettings")
@@ -54,7 +54,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
     @MainActor
     func testDismissWithEscapeToggleTakesEffectImmediately() throws {
         launchApp(sheets: [threePageSheet()])
-        openSettingsFromMenuBar()
+        openSettings()
 
         let toggle = settingsWindow.switches["general.dismissWithEsc"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
@@ -63,7 +63,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
 
         // With Escape disabled the setting is read live, so an already-open
         // overlay survives Escape.
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         overlayContent().click() // make the overlay panel key again
         app.typeKey(.escape, modifierFlags: [])
         assertStateHolds(for: 1.5, "overlay survives Escape while disabled") { state in
@@ -83,7 +83,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click() // back on
         waitForState("dismissWithEsc on") { $0.dismissWithEsc }
 
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         overlayContent().click()
         app.typeKey(.escape, modifierFlags: [])
         waitForState("overlay dismissed once re-enabled") { $0.sessions.isEmpty }
@@ -94,7 +94,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         // Registration itself is stubbed in UI test mode (it would install a
         // real login item); this covers the control and error-free flip.
         launchApp()
-        openSettingsFromMenuBar()
+        openSettings()
 
         let toggle = settingsWindow.switches["general.launchAtLogin"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
@@ -146,13 +146,13 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
     @MainActor
     func testStartPageLastViewedReopensWhereLeft() throws {
         launchApp(sheets: [threePageSheet()]) // lastViewed is the default
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
 
         app.buttons["overlay.nextPage"].click()
         waitForState("moved to page 2") { $0.session(named: "Alpha")?.pageIndex == 1 }
 
         hideAllOverlays()
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         waitForState("reopened on the last viewed page") { $0.session(named: "Alpha")?.pageIndex == 1 }
     }
 
@@ -162,12 +162,12 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         sheet.startPage = "first"
         launchApp(sheets: [sheet])
 
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         app.buttons["overlay.nextPage"].click()
         waitForState("moved to page 2") { $0.session(named: "Alpha")?.pageIndex == 1 }
 
         hideAllOverlays()
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         waitForState("reopened on the first page") { $0.session(named: "Alpha")?.pageIndex == 0 }
     }
 
@@ -191,7 +191,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
 
         waitForState("fixed start page persisted") { $0.sheet(named: "Alpha")?.startPage == "fixed:2" }
 
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         waitForState("overlay opens on the fixed page") { $0.session(named: "Alpha")?.pageIndex == 2 }
     }
 
@@ -201,7 +201,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         sheet.previewScale = 0.4
         launchApp(sheets: [sheet])
 
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         let before = try XCTUnwrap(requestState()?.session(named: "Alpha")).frameRect
 
         openCheatsheetsTab()
@@ -243,7 +243,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         }
 
         // The overlay spawns at the configured relative position.
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         let session = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Alpha"))
         let visible = try XCTUnwrap(session.visibleRect)
         let relativeX = (session.frameRect.midX - visible.minX) / visible.width
@@ -276,7 +276,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
 
         // Give the warm task a moment, then verify the warm path opens fine.
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 2))
-        let state = openOverlayFromMenu("Alpha")
+        let state = openOverlay("Alpha")
         XCTAssertEqual(state?.session(named: "Alpha")?.pageCount, 3)
     }
 
@@ -288,19 +288,12 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         sheet.dragBehavior = "locked"
         launchApp(sheets: [sheet])
 
-        let state = openOverlayFromMenu("Alpha")
+        let state = openOverlay("Alpha")
         let session = try XCTUnwrap(state?.session(named: "Alpha"))
+        // Locked sheets also get no drag strip (same flag), so with background
+        // dragging off there is nothing to grab. No synthesized drag attempt:
+        // a grab that misses would move whatever window lies underneath.
         XCTAssertFalse(session.isMovable, "locked sheets must not be background-movable")
-        let before = session.frameRect
-
-        // Attempt a background drag anyway (no drag strip exists when locked).
-        let content = overlayContent()
-        let start = content.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.3, thenDragTo: start.withOffset(CGVector(dx: 300, dy: 120)))
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 1.5))
-
-        let after = try XCTUnwrap(requestState()?.session(named: "Alpha")).frameRect
-        XCTAssertTrue(after.approximatelyEqual(to: before, tolerance: 2), "locked overlay moved: \(before) → \(after)")
     }
 
     @MainActor
@@ -309,10 +302,10 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         sheet.dragBehavior = "resets"
         launchApp(sheets: [sheet])
 
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         let original = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Alpha")).frameRect
 
-        dragOverlay(by: CGVector(dx: 250, dy: 120))
+        dragOverlay("Alpha", by: CGVector(dx: 250, dy: 120))
         let dragged = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Alpha")).frameRect
         XCTAssertFalse(dragged.approximatelyEqual(to: original, tolerance: 20), "drag should move the overlay for this session")
 
@@ -324,7 +317,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
 
         // …so reopening returns to the configured spot.
         hideAllOverlays()
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         let reopened = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Alpha")).frameRect
         XCTAssertTrue(
             reopened.approximatelyEqual(to: original, tolerance: 5),
@@ -336,10 +329,12 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
     func testDragBehaviorRemembersPersistsAcrossReopen() throws {
         launchApp(sheets: [threePageSheet()]) // remembers is the default
 
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         _ = waitForSettledFrame(sessionNamed: "Alpha")
 
-        dragOverlay(by: CGVector(dx: 250, dy: 120))
+        // The one real mouse drag in the suite: grabs the drag strip, which
+        // is always inside the panel. Everything else moves via the hook.
+        dragOverlayWithMouse(by: CGVector(dx: 250, dy: 120))
         let dragged = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Alpha")).frameRect
 
         waitForState("dragged position written to the store") { state in
@@ -348,7 +343,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         }
 
         hideAllOverlays()
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         let reopened = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Alpha")).frameRect
         XCTAssertTrue(
             reopened.approximatelyEqual(to: dragged, tolerance: 5),
@@ -362,48 +357,35 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         sheet.resizeBehavior = "locked"
         launchApp(sheets: [sheet])
 
-        let state = openOverlayFromMenu("Alpha")
+        let state = openOverlay("Alpha")
         let session = try XCTUnwrap(state?.session(named: "Alpha"))
+        // Without .resizable AppKit offers no resize zone at all. No physical
+        // corner drag here: a synthesized grab that misses the edge becomes a
+        // background window drag and can land on other windows on screen.
         XCTAssertFalse(session.isResizable, "locked sheets must not have a resizable panel")
-        let before = session.frameRect
-
-        // Try to grab the bottom-right corner; the size must not change.
-        let content = overlayContent()
-        let corner = content.coordinate(withNormalizedOffset: CGVector(dx: 0.995, dy: 0.995))
-        corner.press(forDuration: 0.3, thenDragTo: corner.withOffset(CGVector(dx: 200, dy: 200)))
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 1.5))
-
-        let after = try XCTUnwrap(requestState()?.session(named: "Alpha")).frameRect
-        XCTAssertEqual(after.width, before.width, accuracy: 2, "locked overlay was resized")
-        XCTAssertEqual(after.height, before.height, accuracy: 2, "locked overlay was resized")
     }
 
     @MainActor
     func testResizeBehaviorRemembersPersistsScale() throws {
         launchApp(sheets: [threePageSheet()]) // remembers is the default
 
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         let before = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Alpha")).frameRect
 
-        // Drag the bottom-right resize corner outward.
-        let content = overlayContent()
-        let corner = content.coordinate(withNormalizedOffset: CGVector(dx: 0.998, dy: 0.998))
-        corner.press(forDuration: 0.4, thenDragTo: corner.withOffset(CGVector(dx: 250, dy: 250)))
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 1.5))
-
+        // Resize via the app's test hook rather than a synthesized corner
+        // drag: the borderless panel's resize zone is only a few points wide,
+        // and a missed grab turns into a background window drag (or hits a
+        // window underneath). The hook commits through the real resize path.
+        postDebug("userResize:Alpha:250:150")
         let resized = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Alpha")).frameRect
-        if resized.size.equalTo(before.size, within: 5) {
-            // Borderless resize zones are only a few points wide; if the grab
-            // missed there is nothing meaningful to assert.
-            throw XCTSkip("corner drag did not engage the resize zone on this machine")
-        }
+        XCTAssertGreaterThan(resized.width, before.width + 100, "overlay should have grown")
 
         waitForState("resized scale written to the store") { state in
             abs((state.sheet(named: "Alpha")?.previewScale ?? 0.6) - 0.6) > 0.03
         }
 
         hideAllOverlays()
-        openOverlayFromMenu("Alpha")
+        openOverlay("Alpha")
         let reopened = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Alpha")).frameRect
         XCTAssertEqual(reopened.width, resized.width, accuracy: 8, "overlay should reopen at the remembered size")
     }

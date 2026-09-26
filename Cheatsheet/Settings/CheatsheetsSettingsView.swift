@@ -45,13 +45,15 @@ struct CheatsheetsSettingsView: View {
             allowsMultipleSelection: true
         ) { result in
             guard let urls = try? result.get() else { return }
-            switch importTarget {
-            case .newSheet:
-                if let sheet = store.addSheet(files: urls) {
-                    selection = sheet.id
+            HTMLResourceAccess.withResourceAccess(for: urls) {
+                switch importTarget {
+                case .newSheet:
+                    if let sheet = store.addSheet(files: urls) {
+                        selection = sheet.id
+                    }
+                case .existingSheet(let sheetID):
+                    store.addFiles(urls, to: sheetID)
                 }
-            case .existingSheet(let sheetID):
-                store.addFiles(urls, to: sheetID)
             }
         }
         .confirmationDialog(
@@ -126,7 +128,7 @@ struct CheatsheetsSettingsView: View {
         }
         .dropDestination(for: URL.self) { urls, _ in
             guard !urls.isEmpty else { return false }
-            if let sheet = store.addSheet(files: urls) {
+            if let sheet = HTMLResourceAccess.withResourceAccess(for: urls, { store.addSheet(files: urls) }) {
                 selection = sheet.id
                 return true
             }

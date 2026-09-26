@@ -12,6 +12,8 @@ nonisolated struct SheetPage: Hashable {
     let flipHorizontal: Bool
     let flipVertical: Bool
     var isHidden = false
+    /// Markup page shown as source text instead of rendered.
+    var showsRaw = false
 }
 
 /// One visible overlay: its panel, content state, and pin status. Multiple
@@ -24,6 +26,8 @@ final class OverlaySession: Identifiable {
     var pageIndex = 0
     var isPinned = false
     var isLoadingPages = false
+    var search = OverlaySearchState()
+    @ObservationIgnored var searchTask: Task<Void, Never>?
 
     @ObservationIgnored let panel = OverlayPanel()
     @ObservationIgnored var screen: NSScreen?
@@ -73,6 +77,9 @@ final class OverlayController {
     private let store: CheatsheetStore
     private(set) var sessions: [OverlaySession] = []
     private var lastPageIndex: [Cheatsheet.ID: Int] = [:]
+    /// Fired whenever a session opens or closes; the hotkey manager uses it
+    /// to register the pin shortcut only while an overlay is on screen.
+    var onSessionsChanged: (() -> Void)?
 
     // Pre-built pages and pre-decoded start-page images for sheets with
     // "keep start page loaded" — their opens skip the loading state entirely.
@@ -157,7 +164,7 @@ final class OverlayController {
         }
         applyGeometryBehaviors(to: session)
         panel.minSize = NSSize(width: 160, height: 120)
-        panel.contentView = NSHostingView(rootView: OverlayContentView(session: session, controller: self))
+        panel.contentView = OverlayHostingView(rootView: OverlayContentView(session: session, controller: self))
 
         let moveDelegate = PanelMoveDelegate()
         moveDelegate.onMove = { [weak self, weak session] in
@@ -176,6 +183,7 @@ final class OverlayController {
         session.moveDelegate = moveDelegate
 
         sessions.append(session)
+        onSessionsChanged?()
         updateFrame(for: session, animated: false)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
@@ -303,9 +311,11 @@ final class OverlayController {
         guard sessions.contains(where: { $0 === session }) else { return }
         lastPageIndex[session.sheet.id] = session.pageIndex
         sessions.removeAll { $0 === session }
+        onSessionsChanged?()
         // Re-warm "last viewed" start pages to the page just left.
         warmStartPages()
         session.moveCommitTask?.cancel()
+        session.searchTask?.cancel()
         let panel = session.panel
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.12
@@ -344,6 +354,14 @@ final class OverlayController {
         }
     }
 
+    /// Flips the current page's file between rendered and source view. Stored
+    /// on the sheet, so settings' preview follows via the store change.
+    func toggleRaw(_ session: OverlaySession) {
+        guard session.pages.indices.contains(session.pageIndex) else { return }
+        let page = session.pages[session.pageIndex]
+        store.setShowsRaw(!page.showsRaw, forFile: page.url.lastPathComponent, in: session.sheet.id)
+    }
+
     /// Global shortcut target: the key overlay if any, else the transient one,
     /// else the most recent session.
     func togglePinFrontmost() {
@@ -355,6 +373,12 @@ final class OverlayController {
     }
 
     // MARK: - Paging
+
+    func goToPage(_ index: Int, in session: OverlaySession) {
+        guard session.pages.indices.contains(index), index != session.pageIndex else { return }
+        session.pageIndex = index
+        updateFrame(for: session, animated: true)
+    }
 
     func goToNextPage(in session: OverlaySession) {
         guard session.pageIndex < session.pages.count - 1 else { return }
@@ -392,6 +416,9 @@ final class OverlayController {
             if rebuildPages {
                 session.pages = store.pages(for: updated)
                 session.pageIndex = min(session.pageIndex, max(session.pages.count - 1, 0))
+                if session.search.isActive {
+                    runSearch(in: session, jumpToFirst: false)
+                }
             }
             // Keep the panel on whichever screen it currently occupies (the
             // user may have dragged it to another monitor); re-resolving the
@@ -405,10 +432,12 @@ final class OverlayController {
     }
 
     /// Pages are derived only from the files, the page order (which carries
-    /// per-page rotation/flip/hidden), and the sheet's default rotation. Other
+    /// per-page rotation/flip/hidden), the sheet's default rotation, and which
+    /// markup files show as source. Other
     /// edits (scale, position, drag/resize behavior, name…) don't affect them.
     static func pageInputsDiffer(_ a: Cheatsheet, _ b: Cheatsheet) -> Bool {
         a.files != b.files || a.pageOrder != b.pageOrder || a.rotation != b.rotation
+            || a.rawFiles != b.rawFiles
     }
 
     private func applyGeometryBehaviors(to session: OverlaySession) {
@@ -522,6 +551,12 @@ final class OverlayController {
         let isUserDrag = NSEvent.pressedMouseButtons & 1 == 1
             && session.panel.frame.contains(NSEvent.mouseLocation)
         guard isUserDrag else { return }
+        commitUserMove(session)
+    }
+
+    /// Persists (or keeps for the session) where the user dropped the panel,
+    /// then snaps it back inside the visible frame.
+    private func commitUserMove(_ session: OverlaySession) {
         // A user grab overrides any in-flight programmatic animation state —
         // otherwise re-grabbing during a snap animation swallowed the drag.
         session.panel.programmaticMoveGeneration += 1
@@ -555,6 +590,39 @@ final class OverlayController {
     /// which corner-resizes shift) and persist per the sheet's modes. With
     /// both modes set to "configured", nothing is written and the overlay
     /// reverts on its next layout.
+    #if DEBUG
+    /// Test hook: a drag-strip move by `delta` (AppKit points, +y up), left
+    /// wherever it lands — even past a screen edge, as a real drag can — and
+    /// committed through the same path as a real drag. Locked sheets ignore
+    /// it, as their panel refuses real drags.
+    func simulateUserMove(_ session: OverlaySession, by delta: CGSize) {
+        let panel = session.panel
+        guard panel.isMovableByWindowBackground, panel.isVisible else { return }
+        var origin = panel.frame.origin
+        origin.x += delta.width
+        origin.y += delta.height
+        panel.setFrameOrigin(origin)
+        commitUserMove(session)
+    }
+
+    /// Test hook: a bottom-right corner resize by `delta`, committed through
+    /// the same path as a real live resize. Synthesized corner drags miss the
+    /// few-point resize zone and fall through to a background window drag
+    /// (or onto whatever window lies underneath), so UI tests use this.
+    func simulateUserResize(_ session: OverlaySession, by delta: CGSize) {
+        let panel = session.panel
+        guard panel.styleMask.contains(.resizable) else { return }
+        var frame = panel.frame
+        frame.size.width += delta.width
+        frame.size.height += delta.height
+        // Dragging the bottom-right corner keeps the top-left fixed.
+        frame.origin.y -= delta.height
+        panel.liveResizeStartedWithButtonDown = true
+        panel.setFrame(frame, display: true)
+        panelDidEndLiveResize(session)
+    }
+    #endif
+
     private func panelDidEndLiveResize(_ session: OverlaySession) {
         // Animated programmatic frame changes (page transitions and snaps
         // resize the panel) can end a "live resize" too — only user resizes
@@ -659,6 +727,9 @@ final class OverlayController {
     // MARK: - Keys
 
     private func handleKeyEvent(_ event: NSEvent, in session: OverlaySession) -> Bool {
+        if let handled = handleSearchKeyEvent(event, in: session) {
+            return handled
+        }
         switch event.keyCode {
         case 123: // left arrow
             goToPreviousPage(in: session)

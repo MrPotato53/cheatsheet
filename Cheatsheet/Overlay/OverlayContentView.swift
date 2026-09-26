@@ -10,9 +10,6 @@ private struct WindowDragHandle: NSViewRepresentable {
             window?.performDrag(with: event)
         }
 
-        override func resetCursorRects() {
-            addCursorRect(bounds, cursor: .openHand)
-        }
     }
 
     func makeNSView(context: Context) -> HandleView {
@@ -54,7 +51,11 @@ struct OverlayContentView: View {
             } else {
                 ForEach(preloadedIndices, id: \.self) { index in
                     let page = session.pages[index]
-                    MediaPageView(page: page)
+                    MediaPageView(
+                        page: page,
+                        highlight: session.search.highlight(forPage: index),
+                        isInteractive: index == session.pageIndex
+                    )
                         .pageTransform(page)
                         .opacity(index == session.pageIndex ? 1 : 0)
                         .allowsHitTesting(index == session.pageIndex)
@@ -76,7 +77,18 @@ struct OverlayContentView: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            pinButton
+            HStack(spacing: 6) {
+                if session.search.isActive {
+                    searchBar
+                } else if hasSearchablePages {
+                    searchButton
+                }
+                if let currentPage, MediaKind.of(currentPage.url).hasRawView {
+                    rawToggleButton(for: currentPage)
+                }
+                pinButton
+            }
+            .padding(8)
         }
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
@@ -99,10 +111,105 @@ struct OverlayContentView: View {
                 .animation(.easeInOut(duration: 0.15), value: isHovering)
                 .allowsHitTesting(false)
             WindowDragHandle()
+                .overlayCursor(.openHand)
         }
         .frame(height: Self.dragStripHeight)
         .frame(maxWidth: .infinity)
         .help("Drag to move")
+    }
+
+    private var hasSearchablePages: Bool {
+        session.pages.contains { MediaKind.of($0.url) != .unsupported }
+    }
+
+    private var searchButton: some View {
+        Button {
+            controller.openSearch(in: session)
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .frame(width: 18, height: 18)
+        }
+        .buttonStyle(.borderless)
+        .pointingHandCursor()
+        .accessibilityIdentifier("overlay.search")
+        .padding(5)
+        .background(.thinMaterial, in: Circle())
+        .opacity(isHovering ? 1 : 0)
+        .animation(.easeInOut(duration: 0.15), value: isHovering)
+        .help("Search pages (⌘F)")
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            OverlaySearchField(
+                text: session.search.query,
+                focusRequest: session.search.focusRequest
+            ) { controller.setSearchQuery($0, in: session) }
+            .frame(width: 140)
+            if let status = session.search.statusText {
+                Text(status)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                    .accessibilityIdentifier("overlay.search.status")
+            }
+            Group {
+                Button {
+                    controller.stepSearch(in: session, forward: false)
+                } label: {
+                    Image(systemName: "chevron.up")
+                }
+                .help("Previous match (⇧↩)")
+                .accessibilityIdentifier("overlay.search.previous")
+                Button {
+                    controller.stepSearch(in: session, forward: true)
+                } label: {
+                    Image(systemName: "chevron.down")
+                }
+                .help("Next match (↩)")
+                .accessibilityIdentifier("overlay.search.next")
+            }
+            .disabled(session.search.matches.total == 0)
+            Button {
+                controller.closeSearch(in: session)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .help("Close search (esc)")
+            .accessibilityIdentifier("overlay.search.close")
+        }
+        .buttonStyle(.borderless)
+        .pointingHandCursor()
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .background(.thinMaterial, in: Capsule())
+    }
+
+    private var currentPage: SheetPage? {
+        guard !session.isLoadingPages, session.pages.indices.contains(session.pageIndex) else { return nil }
+        return session.pages[session.pageIndex]
+    }
+
+    private func rawToggleButton(for page: SheetPage) -> some View {
+        Button {
+            controller.toggleRaw(session)
+        } label: {
+            Image(systemName: "chevron.left.forwardslash.chevron.right")
+                .frame(width: 18, height: 18)
+                .foregroundStyle(page.showsRaw ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+        }
+        .buttonStyle(.borderless)
+        .pointingHandCursor()
+        .accessibilityIdentifier("overlay.rawToggle")
+        .accessibilityValue(page.showsRaw ? "raw" : "formatted")
+        .padding(5)
+        .background(.thinMaterial, in: Circle())
+        .opacity(isHovering ? 1 : 0)
+        .animation(.easeInOut(duration: 0.15), value: isHovering)
+        .help(page.showsRaw ? "Show formatted" : "Show raw source")
     }
 
     private var pinButton: some View {
@@ -113,10 +220,10 @@ struct OverlayContentView: View {
                 .frame(width: 18, height: 18)
         }
         .buttonStyle(.borderless)
+        .pointingHandCursor()
         .accessibilityIdentifier("overlay.pin")
         .padding(5)
         .background(.thinMaterial, in: Circle())
-        .padding(8)
         .opacity(session.isPinned || isHovering ? 1 : 0)
         .animation(.easeInOut(duration: 0.15), value: isHovering)
         .help(session.isPinned ? "Unpin — overlay dismisses normally again" : "Pin — overlay stays open until unpinned")

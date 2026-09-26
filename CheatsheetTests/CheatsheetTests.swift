@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import KeyboardShortcuts
 import Testing
 
 @testable import Cheatsheet
@@ -11,6 +13,16 @@ struct CheatsheetStoreTests {
         #expect(CheatsheetStore.firstFreeDigit(taken: [1, 3]) == 2)
         #expect(CheatsheetStore.firstFreeDigit(taken: [1, 2, 3, 4, 5, 6, 7, 8, 9]) == 0)
         #expect(CheatsheetStore.firstFreeDigit(taken: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]) == nil)
+    }
+
+    /// The pin shortcut ships with a ⌘⇧P default, but it must never reach the
+    /// system while there's no overlay to act on: with zero open sessions the
+    /// registration is dropped and other apps' ⌘⇧P works normally.
+    @Test func pinShortcutHasDefaultButOnlyInterceptsWithAnOpenOverlay() {
+        #expect(KeyboardShortcuts.Name.togglePin.defaultShortcut == .init(.p, modifiers: [.command, .shift]))
+        #expect(!HotkeyManager.pinShortcutShouldIntercept(openSessionCount: 0))
+        #expect(HotkeyManager.pinShortcutShouldIntercept(openSessionCount: 1))
+        #expect(HotkeyManager.pinShortcutShouldIntercept(openSessionCount: 3))
     }
 
     @Test func persistenceRoundTrip() throws {
@@ -276,5 +288,46 @@ struct CheatsheetStoreTests {
         #expect(OverlayController.pageInputsDiffer(base, added))
         #expect(OverlayController.pageInputsDiffer(base, rotated))
         #expect(OverlayController.pageInputsDiffer(base, reordered))
+
+        var raw = base; raw.rawFiles = ["a.md"]
+        #expect(OverlayController.pageInputsDiffer(base, raw))
+    }
+
+    @Test func rawModeIsPerFilePersistedAndReflectedInPages() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("raw-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sourceDir) }
+        for name in ["a.md", "b.html"] {
+            try name.write(to: sourceDir.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+
+        let store = CheatsheetStore(rootDirectory: root)
+        let sources = ["a.md", "b.html"].map { sourceDir.appendingPathComponent($0) }
+        let sheet = try #require(store.addSheet(files: sources, assignDefaultShortcut: false))
+        #expect(store.pages(for: sheet).allSatisfy { !$0.showsRaw })
+
+        store.setShowsRaw(true, forFile: "a.md", in: sheet.id)
+        let reloaded = CheatsheetStore(rootDirectory: root)
+        let persisted = try #require(reloaded.sheets.first { $0.id == sheet.id })
+        #expect(persisted.rawFiles == ["a.md"])
+        let pages = reloaded.pages(for: persisted)
+        #expect(pages.first { $0.url.lastPathComponent == "a.md" }?.showsRaw == true)
+        #expect(pages.first { $0.url.lastPathComponent == "b.html" }?.showsRaw == false)
+
+        store.setShowsRaw(false, forFile: "a.md", in: sheet.id)
+        #expect(store.sheets.first { $0.id == sheet.id }?.rawFiles.isEmpty == true)
+
+        store.setShowsRaw(true, forFile: "b.html", in: sheet.id)
+        store.removeFile("b.html", from: sheet.id)
+        #expect(store.sheets.first { $0.id == sheet.id }?.rawFiles.isEmpty == true)
+    }
+
+    @Test func rawFilesDecodeWithDefault() throws {
+        let json = #"[{"id": "6F1B5DE1-9C2E-4B6E-BB59-3E9E9B8B0003", "name": "Old"}]"#
+        let sheets = try JSONDecoder().decode([Cheatsheet].self, from: Data(json.utf8))
+        #expect(sheets.first?.rawFiles.isEmpty == true)
     }
 }

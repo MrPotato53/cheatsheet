@@ -101,6 +101,8 @@ nonisolated struct Cheatsheet: Identifiable, Codable, Hashable {
     var resizeBehavior: GeometryBehavior = .remembers
     var target: DisplayTarget = .cursorScreen
     var rotation: Rotation = .deg0
+    /// Markup files (markdown, HTML) shown as source text instead of rendered.
+    var rawFiles: Set<String> = []
 
     var shortcutName: KeyboardShortcuts.Name {
         KeyboardShortcuts.Name("cheatsheet-\(id.uuidString)")
@@ -112,7 +114,7 @@ nonisolated struct Cheatsheet: Identifiable, Codable, Hashable {
 extension Cheatsheet {
     private enum CodingKeys: String, CodingKey {
         case id, name, files, pageOrder, activation, startPage, keepsStartPageLoaded, previewScale
-        case position, dragBehavior, resizeBehavior, target, rotation
+        case position, dragBehavior, resizeBehavior, target, rotation, rawFiles
     }
 
     /// Pre-1.x libraries stored two-state persistence modes under these keys.
@@ -148,5 +150,6 @@ extension Cheatsheet {
             ?? .remembers
         target = try container.decodeIfPresent(DisplayTarget.self, forKey: .target) ?? .cursorScreen
         rotation = try container.decodeIfPresent(Rotation.self, forKey: .rotation) ?? .deg0
+        rawFiles = try container.decodeIfPresent(Set<String>.self, forKey: .rawFiles) ?? []
     }
 }

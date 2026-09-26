@@ -68,6 +68,7 @@ struct AppState: Decodable {
         let pageCount: Int
         let isPinned: Bool
         let isLoading: Bool
+        let isEditingSearch: Bool
         let isVisible: Bool
         let isKey: Bool
         let isMovable: Bool
@@ -94,6 +95,7 @@ struct AppState: Decodable {
         let startPage: String
         let keepsStartPageLoaded: Bool
         let fileCount: Int
+        let rawFiles: [String]
     }
 
     let nonce: String
@@ -109,6 +111,8 @@ struct AppState: Decodable {
     let settingsIsKey: Bool
     let dismissWithEsc: Bool
     let dockIconPolicy: String
+    /// "pointingHand", "openHand", "arrow", "iBeam" or "other".
+    let cursor: String
     let sessions: [Session]
     let sheets: [Sheet]
 
@@ -195,8 +199,30 @@ class CheatsheetUITestCase: XCTestCase {
 
     var statusItem: XCUIElement { app.statusItems.firstMatch }
 
+    /// A crowded menu bar (or a multi-display arrangement) can leave the
+    /// status item without a clickable on-screen position: it exists in the
+    /// accessibility tree but reports a frame off the visible menu bar and
+    /// clicks never open its menu. Tests fall back to the debug channel in
+    /// that case, trading a real menu click for commands wired to the same
+    /// actions the menu buttons invoke.
+    private var statusItemIsClickable: Bool {
+        statusItem.waitForExistence(timeout: 5) && statusItem.isHittable
+    }
+
     func clickStatusMenuItem(_ title: String, file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(statusItem.waitForExistence(timeout: 5), "menu bar status item not found", file: file, line: line)
+        guard statusItemIsClickable else {
+            if title == "Settings…" {
+                postDebug("openSettings")
+                // A real menu click activates the app as a side effect; the
+                // debug command can't (cooperative activation is denied while
+                // the test runner is frontmost, leaving the new window off the
+                // accessibility snapshot). Activate through automation instead.
+                app.activate()
+            } else {
+                postDebug("toggleSheet:\(title)")
+            }
+            return
+        }
         statusItem.click()
         let item = app.menuItems[title]
         XCTAssertTrue(item.waitForExistence(timeout: 5), "menu item '\(title)' not found", file: file, line: line)
@@ -204,6 +230,11 @@ class CheatsheetUITestCase: XCTestCase {
     }
 
     func statusMenuItemExists(_ title: String) -> Bool {
+        guard statusItemIsClickable else {
+            // The menu lists exactly the store's sheets by name; the state
+            // snapshot is the same source of truth.
+            return requestState()?.sheet(named: title) != nil
+        }
         statusItem.click()
         let exists = app.menuItems[title].waitForExistence(timeout: 2)
         // Dismiss menu tracking without triggering anything.
@@ -233,8 +264,19 @@ class CheatsheetUITestCase: XCTestCase {
         button.click()
     }
 
+    /// Opens settings through the menu's action without clicking the menu
+    /// bar. Tests *about* the menu use `openSettingsFromMenuBar`.
+    func openSettings(file: StaticString = #filePath, line: UInt = #line) {
+        postDebug("openSettings")
+        // The debug command can't activate the app while the runner is
+        // frontmost; a real menu click does. Activate so the window is in
+        // the accessibility snapshot.
+        app.activate()
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "settings window did not open", file: file, line: line)
+    }
+
     func openCheatsheetsTab(file: StaticString = #filePath, line: UInt = #line) {
-        openSettingsFromMenuBar(file: file, line: line)
+        openSettings(file: file, line: line)
         openSettingsTab("Cheatsheets", file: file, line: line)
     }
 
@@ -257,6 +299,11 @@ class CheatsheetUITestCase: XCTestCase {
         // on the window itself doesn't move it (verified — the wheel has to
         // land on the scroll view). Target the tallest scroll view in the
         // container, which is the detail form's own scroller.
+        // Under UI tests the settings window opens at full screen height, so
+        // the control is usually already on screen.
+        if element.waitForExistence(timeout: 2), element.isHittable {
+            return
+        }
         let scroller = container.scrollViews.allElementsBoundByIndex
             .max { $0.frame.height < $1.frame.height } ?? container
         scroller.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
@@ -408,10 +455,7 @@ class CheatsheetUITestCase: XCTestCase {
     /// already-running app activates it and delivers the same reopen Apple
     /// event a Dock click does.
     func reopenFromDock(file: StaticString = #filePath, line: UInt = #line) {
-        guard let url = NSRunningApplication
-            .runningApplications(withBundleIdentifier: Self.bundleID)
-            .first?.bundleURL
-        else {
+        guard let url = appUnderTestURL() else {
             XCTFail("app is not running; cannot send reopen", file: file, line: line)
             return
         }
@@ -424,6 +468,20 @@ class CheatsheetUITestCase: XCTestCase {
         } catch {
             XCTFail("failed to run /usr/bin/open: \(error)", file: file, line: line)
         }
+    }
+
+    /// The running copy this test launched: the Cheatsheet.app built next to
+    /// the test runner. Other copies (a developer's instance run from Xcode or
+    /// a release build) share the bundle ID, and `.first` could pick them.
+    private func appUnderTestURL() -> URL? {
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID)
+        var directory = Bundle(for: Self.self).bundleURL
+        while directory.pathComponents.count > 1, !directory.lastPathComponent.hasSuffix("-Runner.app") {
+            directory.deleteLastPathComponent()
+        }
+        let expected = directory.deletingLastPathComponent()
+            .appendingPathComponent("Cheatsheet.app").standardizedFileURL.resolvingSymlinksInPath()
+        return running.first { $0.bundleURL?.standardizedFileURL.resolvingSymlinksInPath() == expected }?.bundleURL
     }
 
     func deactivateApp(file: StaticString = #filePath, line: UInt = #line) {
@@ -454,10 +512,23 @@ class CheatsheetUITestCase: XCTestCase {
         return pin
     }
 
+    /// Opens a sheet through the status menu's action (the same toggle call)
+    /// without clicking the menu bar — far faster, and immune to a crowded
+    /// menu bar. Tests *about* the menu use `openOverlayFromMenu`.
+    @discardableResult
+    func openOverlay(_ sheetName: String, file: StaticString = #filePath, line: UInt = #line) -> AppState? {
+        postDebug("toggleSheet:\(sheetName)")
+        return waitForOverlayLoaded(sheetName, file: file, line: line)
+    }
+
     @discardableResult
     func openOverlayFromMenu(_ sheetName: String, file: StaticString = #filePath, line: UInt = #line) -> AppState? {
         clickStatusMenuItem(sheetName, file: file, line: line)
-        return waitForState(timeout: 10, "overlay '\(sheetName)' visible and loaded", file: file, line: line) { state in
+        return waitForOverlayLoaded(sheetName, file: file, line: line)
+    }
+
+    private func waitForOverlayLoaded(_ sheetName: String, file: StaticString, line: UInt) -> AppState? {
+        waitForState(timeout: 10, "overlay '\(sheetName)' visible and loaded", file: file, line: line) { state in
             guard let session = state.session(named: sheetName) else { return false }
             return session.isVisible && !session.isLoading
         }
@@ -468,10 +539,20 @@ class CheatsheetUITestCase: XCTestCase {
         waitForState(timeout: 8, "all overlays hidden", file: file, line: line) { $0.sessions.isEmpty }
     }
 
-    /// Drags the overlay by its top drag strip. The vector is in points in
+    /// Moves the overlay as a drag-strip drag would, through the app's real
+    /// drag-commit path but without the mouse: synthesized drags are slow and
+    /// a missed grab moves whatever window lies underneath. The vector is in
     /// accessibility coordinates (+x right, +y DOWN — the opposite of the
     /// AppKit frames reported on the state channel).
-    func dragOverlay(by vector: CGVector, file: StaticString = #filePath, line: UInt = #line) {
+    func dragOverlay(_ sheetName: String, by vector: CGVector) {
+        postDebug("userMove:\(sheetName):\(vector.dx):\(-vector.dy)")
+        // Commits are debounced 250ms; let the settle and snap run.
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
+    }
+
+    /// A real mouse drag on the top drag strip, which is always inside the
+    /// panel. Only for the test covering the drag gesture itself.
+    func dragOverlayWithMouse(by vector: CGVector, file: StaticString = #filePath, line: UInt = #line) {
         let content = overlayContent()
         XCTAssertTrue(content.waitForExistence(timeout: 5), "overlay content not found for dragging", file: file, line: line)
         let start = content.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.02))
@@ -508,7 +589,19 @@ class CheatsheetUITestCase: XCTestCase {
         if edges.contains(.left) { dx = (visible.minX - frame.minX) - overshoot }
         if edges.contains(.top) { dy = -((visible.maxY - frame.maxY) + overshoot) }
         if edges.contains(.bottom) { dy = (frame.minY - visible.minY) + overshoot }
-        dragOverlay(by: CGVector(dx: dx, dy: dy), file: file, line: line)
+        dragOverlay(name, by: CGVector(dx: dx, dy: dy))
+    }
+
+    func goToPage(_ index: Int, of sheetName: String, file: StaticString = #filePath, line: UInt = #line) {
+        postDebug("goToPage:\(sheetName):\(index)")
+        waitForState("\(sheetName) on page \(index + 1)", file: file, line: line) {
+            $0.session(named: sheetName)?.pageIndex == index
+        }
+    }
+
+    /// Opens search and sets the query the way typing into the field does.
+    func search(_ query: String, in sheetName: String) {
+        postDebug("search:\(sheetName):\(query)")
     }
 
     // MARK: Geometry assertions (AppKit coordinates)
