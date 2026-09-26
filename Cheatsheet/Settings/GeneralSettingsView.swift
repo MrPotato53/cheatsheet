@@ -7,6 +7,7 @@ struct GeneralSettingsView: View {
     @State private var launchAtLoginError: String?
     @AppStorage("dismissWithEsc", store: AppDefaults.store) private var dismissWithEsc = true
     @AppStorage("dockIconPolicy", store: AppDefaults.store) private var dockIconPolicy = DockIconPolicy.whenSettingsOpen.rawValue
+    @State private var pinShortcutWarning: String?
 
     var body: some View {
         Form {
@@ -37,11 +38,27 @@ struct GeneralSettingsView: View {
             }
             Section {
                 LabeledContent("Pin/unpin current cheatsheet") {
-                    KeyboardShortcuts.Recorder("", name: .togglePin)
+                    KeyboardShortcuts.Recorder("", name: .togglePin) { shortcut in
+                        pinShortcutWarning = SystemShortcuts.conflictWarning(for: shortcut)
+                        // Recording re-registers the shortcut unconditionally;
+                        // re-apply the only-while-overlay-open gate.
+                        AppModel.shared.hotkeys.updatePinShortcutAvailability()
+                    }
+                }
+                if let pinShortcutWarning {
+                    Text(pinShortcutWarning)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("general.systemShortcutWarning")
                 }
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            pinShortcutWarning = SystemShortcuts.conflictWarning(
+                for: KeyboardShortcuts.getShortcut(for: .togglePin)
+            )
+        }
     }
 
     private func setLaunchAtLogin(_ enabled: Bool) {

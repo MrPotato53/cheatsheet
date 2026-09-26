@@ -110,7 +110,11 @@ enum UITestSeeder {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             for (index, page) in spec.pages.enumerated() {
                 let url = directory.appendingPathComponent(page.file)
-                if let text = page.text {
+                if let text = page.text, url.pathExtension == "pdf" {
+                    writePDF(text: text, to: url)
+                } else if let text = page.text, url.pathExtension == "png" {
+                    writeTextPNG(text: text, width: page.width ?? 1200, height: page.height ?? 800, to: url)
+                } else if let text = page.text {
                     try? text.write(to: url, atomically: true, encoding: .utf8)
                 } else {
                     writePNG(
@@ -144,6 +148,39 @@ enum UITestSeeder {
             }
             return .lastViewed
         }
+    }
+
+    /// One Letter-size page with `text` set near the top — gives PDF search a
+    /// real text layer to find.
+    private static func writePDF(text: String, to url: URL) {
+        var mediaBox = CGRect(x: 0, y: 0, width: 612, height: 792)
+        guard let context = CGContext(url as CFURL, mediaBox: &mediaBox, nil) else { return }
+        context.beginPDFPage(nil)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 24)])
+            .draw(in: CGRect(x: 72, y: 72, width: 468, height: 648))
+        NSGraphicsContext.restoreGraphicsState()
+        context.endPDFPage()
+        context.closePDF()
+    }
+
+    /// Black text on white — an image with real text for OCR search.
+    private static func writeTextPNG(text: String, width: Int, height: Int, to url: URL) {
+        let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            NSAttributedString(string: text, attributes: [
+                .font: NSFont.systemFont(ofSize: 48),
+                .foregroundColor: NSColor.black,
+            ]).draw(in: rect.insetBy(dx: 60, dy: 60))
+            return true
+        }
+        guard
+            let tiff = image.tiffRepresentation,
+            let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+        else { return }
+        try? png.write(to: url)
     }
 
     private static func writePNG(width: Int, height: Int, color: NSColor, to url: URL) {

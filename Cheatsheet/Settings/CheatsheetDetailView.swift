@@ -9,6 +9,7 @@ struct CheatsheetDetailView: View {
     @Environment(OverlayController.self) private var overlay
     @State private var previousShortcut: KeyboardShortcuts.Shortcut?
     @State private var conflictMessage: String?
+    @State private var systemConflictWarning: String?
     @State private var isDisplayPopoverPresented = false
     @State private var isDeleteConfirmationPresented = false
 
@@ -56,6 +57,12 @@ struct CheatsheetDetailView: View {
                     Text(conflictMessage)
                         .font(.caption)
                         .foregroundStyle(.red)
+                }
+                if let systemConflictWarning {
+                    Text(systemConflictWarning)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("detail.systemShortcutWarning")
                 }
             }
 
@@ -163,6 +170,7 @@ struct CheatsheetDetailView: View {
         }
         .onAppear {
             previousShortcut = KeyboardShortcuts.getShortcut(for: sheet.shortcutName)
+            systemConflictWarning = SystemShortcuts.conflictWarning(for: previousShortcut)
         }
     }
 
@@ -173,6 +181,7 @@ struct CheatsheetDetailView: View {
         guard let shortcut else {
             previousShortcut = nil
             conflictMessage = nil
+            systemConflictWarning = nil
             return
         }
         if let other = store.conflictingSheet(with: shortcut, excluding: sheet.id) {
@@ -182,6 +191,9 @@ struct CheatsheetDetailView: View {
             previousShortcut = shortcut
             conflictMessage = nil
         }
+        systemConflictWarning = SystemShortcuts.conflictWarning(
+            for: KeyboardShortcuts.getShortcut(for: sheet.shortcutName)
+        )
     }
 
     private func documentRow(_ file: String) -> some View {

@@ -29,7 +29,7 @@ final class EdgeSnapUITests: CheatsheetUITestCase {
     @MainActor
     func testDragPastRightEdgeSnapsFullyOnScreen() throws {
         launchApp(sheets: [edgeSheet()])
-        openOverlayFromMenu("Edges")
+        openOverlay("Edges")
         _ = waitForSettledFrame(sessionNamed: "Edges")
 
         // Shove it far past the right edge of the monitor.
@@ -43,7 +43,7 @@ final class EdgeSnapUITests: CheatsheetUITestCase {
     @MainActor
     func testDragPastTopEdgeClampsWithinVisibleFrame() throws {
         launchApp(sheets: [edgeSheet()])
-        openOverlayFromMenu("Edges")
+        openOverlay("Edges")
         _ = waitForSettledFrame(sessionNamed: "Edges")
 
         // Up and past the menu bar.
@@ -57,7 +57,7 @@ final class EdgeSnapUITests: CheatsheetUITestCase {
     @MainActor
     func testRightEdgeContactPreservedAcrossAspectChange() throws {
         launchApp(sheets: [edgeSheet()])
-        openOverlayFromMenu("Edges")
+        openOverlay("Edges")
         _ = waitForSettledFrame(sessionNamed: "Edges")
 
         dragOverlayTowards([.right], sessionNamed: "Edges")
@@ -66,13 +66,13 @@ final class EdgeSnapUITests: CheatsheetUITestCase {
 
         // Page 2 is much narrower. Edge intent says it should still hug the
         // right edge. (Current model: proportional center → expected gap.)
-        app.buttons["overlay.nextPage"].click()
+        goToPage(1, of: "Edges")
         let narrow = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Edges"))
         XCTAssertEqual(narrow.pageIndex, 1)
         assertTouchesEdge(.right, narrow)
 
         // Back to the wide page: contact must be restored either way.
-        app.buttons["overlay.previousPage"].click()
+        goToPage(0, of: "Edges")
         let wide = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Edges"))
         XCTAssertEqual(wide.pageIndex, 0)
         assertTouchesEdge(.right, wide)
@@ -81,25 +81,25 @@ final class EdgeSnapUITests: CheatsheetUITestCase {
     @MainActor
     func testTopEdgeContactPreservedAcrossAspectChange() throws {
         launchApp(sheets: [edgeSheet()])
-        openOverlayFromMenu("Edges")
+        openOverlay("Edges")
         _ = waitForSettledFrame(sessionNamed: "Edges")
 
         // Go to the tall page first (it fills the size box's height), then
         // pin it against the top edge.
-        app.buttons["overlay.nextPage"].click()
+        goToPage(1, of: "Edges")
         _ = waitForSettledFrame(sessionNamed: "Edges")
         dragOverlayTowards([.top], sessionNamed: "Edges")
         let snapped = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Edges"))
         assertTouchesEdge(.top, snapped)
 
         // The wide page is much shorter. Edge intent: still hug the top.
-        app.buttons["overlay.previousPage"].click()
+        goToPage(0, of: "Edges")
         let short = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Edges"))
         XCTAssertEqual(short.pageIndex, 0)
         assertTouchesEdge(.top, short)
 
         // And back: the tall page returns to the top edge.
-        app.buttons["overlay.nextPage"].click()
+        goToPage(1, of: "Edges")
         let tall = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Edges"))
         XCTAssertEqual(tall.pageIndex, 1)
         assertTouchesEdge(.top, tall)
@@ -108,7 +108,7 @@ final class EdgeSnapUITests: CheatsheetUITestCase {
     @MainActor
     func testCornerContactPreservedAcrossAspectChange() throws {
         launchApp(sheets: [edgeSheet()])
-        openOverlayFromMenu("Edges")
+        openOverlay("Edges")
         _ = waitForSettledFrame(sessionNamed: "Edges")
 
         // Into the top-right corner (both axes at once).
@@ -118,14 +118,14 @@ final class EdgeSnapUITests: CheatsheetUITestCase {
         assertTouchesEdge(.top, snapped)
 
         // Aspect flips wide→tall: corner intent should survive on both axes.
-        app.buttons["overlay.nextPage"].click()
+        goToPage(1, of: "Edges")
         let flipped = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Edges"))
         XCTAssertEqual(flipped.pageIndex, 1)
         assertTouchesEdge(.right, flipped)
         assertTouchesEdge(.top, flipped)
 
         // And survive flipping back.
-        app.buttons["overlay.previousPage"].click()
+        goToPage(0, of: "Edges")
         let restored = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Edges"))
         assertTouchesEdge(.right, restored)
         assertTouchesEdge(.top, restored)
@@ -134,7 +134,7 @@ final class EdgeSnapUITests: CheatsheetUITestCase {
     @MainActor
     func testEdgeContactSurvivesReopenWithRememberedPosition() throws {
         launchApp(sheets: [edgeSheet()]) // dragBehavior remembers (default)
-        openOverlayFromMenu("Edges")
+        openOverlay("Edges")
         _ = waitForSettledFrame(sessionNamed: "Edges")
 
         dragOverlayTowards([.right], sessionNamed: "Edges")
@@ -142,7 +142,7 @@ final class EdgeSnapUITests: CheatsheetUITestCase {
         assertTouchesEdge(.right, snapped)
 
         hideAllOverlays()
-        openOverlayFromMenu("Edges")
+        openOverlay("Edges")
         let reopened = try XCTUnwrap(waitForSettledFrame(sessionNamed: "Edges"))
         assertTouchesEdge(.right, reopened)
     }

@@ -204,6 +204,19 @@ struct SheetInlinePreview: View {
                 Image(systemName: "arrow.up.and.down.righttriangle.up.righttriangle.down")
             }
             .help("Flip vertically")
+            if let previewPage, MediaKind.of(previewPage.url).hasRawView {
+                Divider()
+                    .frame(width: 18)
+                Button {
+                    store.setShowsRaw(!previewPage.showsRaw, forFile: previewPage.url.lastPathComponent, in: sheet.id)
+                } label: {
+                    Image(systemName: "chevron.left.forwardslash.chevron.right")
+                        .foregroundStyle(previewPage.showsRaw ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                }
+                .help(previewPage.showsRaw ? "Show formatted" : "Show raw source")
+                .accessibilityIdentifier("preview.rawToggle")
+                .accessibilityValue(previewPage.showsRaw ? "raw" : "formatted")
+            }
         }
         .font(.title3)
         .buttonStyle(.borderless)
@@ -413,7 +426,7 @@ enum PageThumbnailRenderer {
                 .thumbnail(of: CGSize(width: 112, height: 112), for: .mediaBox)
         case .image:
             rendered = imageThumbnail(at: page.url, maxPixels: 112)
-        case .markdown, .text, .unsupported:
+        case .markdown, .html, .text, .unsupported:
             rendered = nil
         }
         if let rendered {

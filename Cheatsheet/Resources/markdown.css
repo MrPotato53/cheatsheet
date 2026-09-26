@@ -90,6 +90,26 @@ hr {
 
 ul, ol { padding-left: 1.6em; }
 
+/* Tight lists still parse to paragraphs inside items; keep them compact. */
+li > p { margin: 0.25em 0; }
+
+/* GFM task lists: hide the bullet, align the checkbox. */
+li.task { list-style: none; margin-left: -1.3em; }
+li.task input[type="checkbox"] { vertical-align: middle; margin-right: 0.4em; }
+
+/* Mermaid diagrams (rendered to inline SVG by the page script). */
+.mermaid { text-align: center; margin: 0.8em 0; }
+.mermaid svg { max-width: 100%; height: auto; }
+.mermaid-error {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.9em;
+  white-space: pre-wrap;
+  text-align: left;
+  background: rgba(255, 129, 130, 0.15);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
 @media (prefers-color-scheme: dark) {
   body { background: #1e1e1e; color: #d4d4d8; }
   h1, h2 { border-bottom-color: #3d3d40; }

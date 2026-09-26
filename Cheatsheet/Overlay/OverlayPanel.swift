@@ -20,6 +20,9 @@ final class OverlayPanel: NSPanel {
     /// animations start from a task that waits for button release first.
     var liveResizeStartedWithButtonDown = false
 
+    /// Views whose area shows a custom cursor (see PointingHandCursor.swift).
+    let cursorRegions = NSHashTable<NSView>.weakObjects()
+
     private static let logger = Logger(subsystem: "potatodev.Cheatsheet", category: "overlay-scroll")
 
     init() {

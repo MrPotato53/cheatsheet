@@ -100,9 +100,24 @@ final class CheatsheetStore {
 
     func removeFile(_ file: String, from sheetID: Cheatsheet.ID) {
         guard let index = sheets.firstIndex(where: { $0.id == sheetID }) else { return }
-        try? FileManager.default.removeItem(at: fileURL(for: sheets[index], file: file))
+        let removedURL = fileURL(for: sheets[index], file: file)
+        let removedRoots = MediaKind.of(removedURL) == .html ? HTMLResources.referencedRoots(ofFileAt: removedURL) : []
+        try? FileManager.default.removeItem(at: removedURL)
         sheets[index].files.removeAll { $0 == file }
+        removeOrphanedResources(removedRoots, in: sheets[index])
         sheets[index].pageOrder.removeAll { $0.file == file }
+        sheets[index].rawFiles.remove(file)
+        persist()
+    }
+
+    func setShowsRaw(_ showsRaw: Bool, forFile file: String, in sheetID: Cheatsheet.ID) {
+        guard let index = sheets.firstIndex(where: { $0.id == sheetID }) else { return }
+        guard sheets[index].rawFiles.contains(file) != showsRaw else { return }
+        if showsRaw {
+            sheets[index].rawFiles.insert(file)
+        } else {
+            sheets[index].rawFiles.remove(file)
+        }
         persist()
     }
 
@@ -190,6 +205,18 @@ final class CheatsheetStore {
         persist()
     }
 
+    /// Deletes resource roots no remaining HTML page of the sheet references.
+    private func removeOrphanedResources(_ roots: [String], in sheet: Cheatsheet) {
+        guard !roots.isEmpty else { return }
+        let stillUsed = Set(sheet.files.flatMap { file -> [String] in
+            let url = fileURL(for: sheet, file: file)
+            return MediaKind.of(url) == .html ? HTMLResources.referencedRoots(ofFileAt: url) : []
+        })
+        for root in roots where !stillUsed.contains(root) && !sheet.files.contains(root) {
+            try? FileManager.default.removeItem(at: fileURL(for: sheet, file: root))
+        }
+    }
+
     private func copyFiles(_ urls: [URL], into sheet: Cheatsheet) -> [String] {
         let directory = mediaRoot.appendingPathComponent(sheet.id.uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -208,6 +235,9 @@ final class CheatsheetStore {
             do {
                 try FileManager.default.copyItem(at: url, to: directory.appendingPathComponent(name))
                 names.append(name)
+                if MediaKind.of(url) == .html {
+                    HTMLResources.copyResources(ofPageAt: url, into: directory)
+                }
             } catch {
                 continue
             }

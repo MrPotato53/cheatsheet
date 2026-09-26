@@ -48,7 +48,7 @@ final class SettingsWindowUITests: CheatsheetUITestCase {
     @MainActor
     func testDockReopenRefocusesOpenSettingsWindow() throws {
         launchApp(defaults: ["dockIconPolicy": "always"])
-        openSettingsFromMenuBar()
+        openSettings()
         waitForState("settings open") { $0.settingsVisible }
 
         deactivateApp()
@@ -75,7 +75,7 @@ final class SettingsWindowUITests: CheatsheetUITestCase {
     func testReopenRestoresMinimizedSettingsWindow() throws {
         // Dock icon always present so there's an icon to "click".
         launchApp(defaults: ["dockIconPolicy": "always"])
-        openSettingsFromMenuBar()
+        openSettings()
         waitForState("settings open") { $0.settingsVisible }
 
         // Minimize into the Dock: the window still exists but isn't visible.
@@ -96,7 +96,7 @@ final class SettingsWindowUITests: CheatsheetUITestCase {
     @MainActor
     func testMenuBarRestoresMinimizedSettingsWindow() throws {
         launchApp()
-        openSettingsFromMenuBar()
+        openSettings()
         waitForState("settings open") { $0.settingsVisible }
 
         postDebug("minimizeSettings")
@@ -112,7 +112,7 @@ final class SettingsWindowUITests: CheatsheetUITestCase {
     @MainActor
     func testCloseSettingsDropsDockIconAndReopensCleanly() throws {
         launchApp() // default policy: dock icon only while settings is open
-        openSettingsFromMenuBar()
+        openSettings()
         waitForState("regular policy while open") { $0.activationPolicy == "regular" }
 
         postDebug("closeSettings")
@@ -120,7 +120,7 @@ final class SettingsWindowUITests: CheatsheetUITestCase {
             !state.settingsVisible && state.activationPolicy == "accessory"
         }
 
-        openSettingsFromMenuBar()
+        openSettings()
         waitForState("settings reopens after close, single window") { state in
             state.settingsVisible && state.settingsWindowCount == 1
         }

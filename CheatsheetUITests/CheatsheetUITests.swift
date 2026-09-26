@@ -12,8 +12,11 @@ final class LaunchUITests: CheatsheetUITestCase {
         }
         XCTAssertFalse(settingsWindow.exists, "settings window should not open at launch")
 
-        // The status menu lists the seeded sheet and the fixed items.
+        // The status menu lists the seeded sheet and the fixed items. On a
+        // crowded menu bar macOS gives the item no clickable position, so the
+        // menu-content check is only possible when it's actually clickable.
         XCTAssertTrue(statusItem.waitForExistence(timeout: 10), "menu bar status item never appeared")
+        guard statusItem.isHittable else { return }
         statusItem.click()
         XCTAssertTrue(app.menuItems["Alpha"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.menuItems["Settings…"].exists)
@@ -26,9 +29,11 @@ final class LaunchUITests: CheatsheetUITestCase {
         // Hermetic even for the perf launches: never read the real library.
         let application = XCUIApplication()
         application.launchEnvironment["CHEATSHEET_TEST_RUN"] = UUID().uuidString
+        // Terminate inside each iteration: relaunching a still-running app
+        // records no launch metric, failing every iteration after the first.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             application.launch()
+            application.terminate()
         }
-        application.terminate()
     }
 }
