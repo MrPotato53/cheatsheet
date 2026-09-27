@@ -5,6 +5,7 @@ import SwiftUI
 struct CheatsheetDetailView: View {
     @Binding var sheet: Cheatsheet
     let requestAddFiles: () -> Void
+    let requestExport: () -> Void
     @Environment(CheatsheetStore.self) private var store
     @Environment(OverlayController.self) private var overlay
     @State private var previousShortcut: KeyboardShortcuts.Shortcut?
@@ -12,6 +13,13 @@ struct CheatsheetDetailView: View {
     @State private var systemConflictWarning: String?
     @State private var isDisplayPopoverPresented = false
     @State private var isDeleteConfirmationPresented = false
+    @State private var reviewingFile: ReviewTarget?
+    @State private var linkProblem: String?
+
+    private struct ReviewTarget: Identifiable {
+        let file: String
+        var id: String { file }
+    }
 
     var body: some View {
         Form {
@@ -104,7 +112,7 @@ struct CheatsheetDetailView: View {
             Section("Size & Position") {
                 LabeledContent("Size") {
                     HStack(spacing: 10) {
-                        Slider(value: $sheet.previewScale, in: 0.25...1.0, step: 0.05) {
+                        Slider(value: $sheet.previewScale, in: Cheatsheet.previewScaleRange, step: 0.05) {
                             EmptyView()
                         } minimumValueLabel: {
                             Text("25%")
@@ -148,12 +156,17 @@ struct CheatsheetDetailView: View {
             }
 
             Section {
-                Button("Delete Cheatsheet…", role: .destructive) {
-                    isDeleteConfirmationPresented = true
+                HStack(spacing: 20) {
+                    Button("Export Cheatsheet…", action: requestExport)
+                        .help("Save this cheatsheet's files and settings to a file you can import on any Mac")
+                        .accessibilityIdentifier("detail.export")
+                    Button("Delete Cheatsheet…", role: .destructive) {
+                        isDeleteConfirmationPresented = true
+                    }
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("detail.delete")
                 }
-                .foregroundStyle(.red)
                 .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("detail.delete")
             }
         }
         .formStyle(.grouped)
@@ -168,9 +181,44 @@ struct CheatsheetDetailView: View {
         } message: {
             Text("“\(sheet.name)” and its imported files will be removed.")
         }
+        .sheet(item: $reviewingFile) { target in
+            SyncReviewSheet(file: target.file, sheetID: sheet.id) {
+                reviewingFile = nil
+            }
+        }
+        .alert("Couldn't Link Original", isPresented: Binding(
+            get: { linkProblem != nil },
+            set: { if !$0 { linkProblem = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(linkProblem ?? "")
+        }
+        .task(id: sheet.id) {
+            await store.checkLinks(for: sheet.id)
+        }
         .onAppear {
             previousShortcut = KeyboardShortcuts.getShortcut(for: sheet.shortcutName)
             systemConflictWarning = SystemShortcuts.conflictWarning(for: previousShortcut)
+        }
+    }
+
+    private func handleLinkResult(_ result: CheatsheetStore.LinkResult, file: String) {
+        switch result {
+        case .linked:
+            break
+        case .needsReview:
+            reviewingFile = ReviewTarget(file: file)
+        case .differentKind(let expected, let chosen):
+            linkProblem = "“\(file)” is \(expected.descriptionWithArticle), but the file you chose is \(chosen.descriptionWithArticle). Choose the same kind of file."
+        case .failed:
+            linkProblem = "Cheatsheet couldn't open the file you chose."
+        }
+    }
+
+    private func reveal(_ url: URL) {
+        OriginalFiles.withAccess(to: url) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
         }
     }
 
@@ -198,6 +246,7 @@ struct CheatsheetDetailView: View {
 
     private func documentRow(_ file: String) -> some View {
         let exists = store.fileExists(for: sheet, file: file)
+        let state = store.syncState(of: file, in: sheet)
         return HStack {
             Label(file, systemImage: MediaKind.of(URL(filePath: file)).systemImage)
             if !exists {
@@ -206,19 +255,32 @@ struct CheatsheetDetailView: View {
                     .foregroundStyle(.red)
                     .labelStyle(.titleAndIcon)
                     .help("The app's copy of this file was deleted. Remove the entry or re-add the file.")
+            } else if store.syncsWithOriginals {
+                FileSyncBadge(state: state, isLinked: sheet.links[file] != nil) {
+                    reviewingFile = ReviewTarget(file: file)
+                }
             }
             Spacer()
             Button {
-                NSWorkspace.shared.activateFileViewerSelecting(
-                    [store.fileURL(for: sheet, file: file)]
-                )
+                // The file edits go to: the original while in sync.
+                reveal(store.activeURL(ofFile: file, in: sheet))
             } label: {
                 Image(systemName: "folder")
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
             .disabled(!exists)
-            .help("Reveal the app's copy in Finder")
+            .help(state == .linked ? "Reveal the original in Finder" : "Reveal Cheatsheet's copy in Finder")
+            if store.syncsWithOriginals, exists {
+                FileSyncMenu(
+                    file: file,
+                    sheet: sheet,
+                    state: state,
+                    onReveal: reveal,
+                    onReview: { reviewingFile = ReviewTarget(file: file) },
+                    onLinked: { handleLinkResult($0, file: file) }
+                )
+            }
             Button {
                 store.removeFile(file, from: sheet.id)
             } label: {

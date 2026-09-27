@@ -103,9 +103,20 @@ nonisolated struct Cheatsheet: Identifiable, Codable, Hashable {
     var rotation: Rotation = .deg0
     /// Markup files (markdown, HTML) shown as source text instead of rendered.
     var rawFiles: Set<String> = []
+    /// Originals of files, by file name, for "keep in sync with original
+    /// files". Machine-specific, so never exported.
+    var links: [String: FileLink] = [:]
 
     var shortcutName: KeyboardShortcuts.Name {
         KeyboardShortcuts.Name("cheatsheet-\(id.uuidString)")
+    }
+
+    /// Overlay size as a fraction of the screen: the settings slider's range,
+    /// and the bounds every drag-resize and layout clamps to.
+    static let previewScaleRange: ClosedRange<Double> = 0.25...1.0
+
+    static func clampedScale(_ scale: Double) -> Double {
+        min(max(scale, previewScaleRange.lowerBound), previewScaleRange.upperBound)
     }
 }
 
@@ -114,7 +125,7 @@ nonisolated struct Cheatsheet: Identifiable, Codable, Hashable {
 extension Cheatsheet {
     private enum CodingKeys: String, CodingKey {
         case id, name, files, pageOrder, activation, startPage, keepsStartPageLoaded, previewScale
-        case position, dragBehavior, resizeBehavior, target, rotation, rawFiles
+        case position, dragBehavior, resizeBehavior, target, rotation, rawFiles, links
     }
 
     /// Pre-1.x libraries stored two-state persistence modes under these keys.
@@ -151,5 +162,7 @@ extension Cheatsheet {
         target = try container.decodeIfPresent(DisplayTarget.self, forKey: .target) ?? .cursorScreen
         rotation = try container.decodeIfPresent(Rotation.self, forKey: .rotation) ?? .deg0
         rawFiles = try container.decodeIfPresent(Set<String>.self, forKey: .rawFiles) ?? []
+        // A link that can't be read only loses its sync, never the sheet.
+        links = (try? container.decodeIfPresent([String: FileLink].self, forKey: .links)) ?? [:]
     }
 }

@@ -38,8 +38,10 @@ struct MediaPageView: View {
 enum WarmPageImages {
     private(set) static var images: [String: NSImage] = [:]
 
+    /// Includes the file's modification time: after an in-place edit the
+    /// warmed decode of the old version simply misses.
     static func key(url: URL, pdfPageIndex: Int?) -> String {
-        "\(url.path)#\(pdfPageIndex ?? -1)"
+        "\(FileStamp.versionedKey(for: url))#\(pdfPageIndex ?? -1)"
     }
 
     static func image(url: URL, pdfPageIndex: Int?) -> NSImage? {
@@ -152,6 +154,7 @@ struct TextFileView: NSViewRepresentable {
     var isInteractive = true
 
     final class Coordinator {
+        var loadedVersion: String?
         var appliedHighlight: SearchHighlight?
     }
 
@@ -178,10 +181,13 @@ struct TextFileView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         scrollView.isHidden = !isInteractive
         guard let textView = scrollView.documentView as? NSTextView else { return }
-        let contents = Self.contents(of: url)
-        let contentChanged = textView.string != contents
+        // Re-read only for a new file or a new version of it (edited in
+        // place), not on every SwiftUI update (hover, paging, search…).
+        let version = FileStamp.versionedKey(for: url)
+        let contentChanged = context.coordinator.loadedVersion != version
         if contentChanged {
-            textView.string = contents
+            context.coordinator.loadedVersion = version
+            textView.string = Self.contents(of: url)
             textView.scrollToBeginningOfDocument(nil)
         }
         if contentChanged || context.coordinator.appliedHighlight != highlight {

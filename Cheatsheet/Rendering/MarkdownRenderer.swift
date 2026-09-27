@@ -85,6 +85,43 @@ nonisolated enum MarkdownRenderer {
             .flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
     }
 
+    /// Injected into markdown pages: code blocks get a Copy button, and task
+    /// checkboxes become tickable where the host set
+    /// `cheatsheetTasksEnabled` (the live overlay only). Both post
+    /// to the "cheatsheet" message handler; the page never touches files.
+    static let interactionJS = """
+    (function () {
+      var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.cheatsheet;
+      if (!handler) { return; }
+      // Ticking only where the host opted in (the live overlay).
+      if (window.cheatsheetTasksEnabled) document.querySelectorAll('input[type=checkbox][data-line]').forEach(function (box) {
+        box.disabled = false;
+        box.addEventListener('change', function () {
+          handler.postMessage({ type: 'task', line: parseInt(box.dataset.line, 10), checked: box.checked });
+        });
+      });
+      var style = document.createElement('style');
+      style.textContent = 'pre{position:relative}' +
+        '.cs-copy{position:absolute;top:6px;right:6px;font:11px -apple-system,sans-serif;padding:2px 8px;' +
+        'border-radius:5px;border:1px solid rgba(128,128,128,.4);background:rgba(128,128,128,.15);color:inherit;' +
+        'cursor:pointer;opacity:0;transition:opacity .15s}pre:hover .cs-copy{opacity:1}';
+      document.head.appendChild(style);
+      document.querySelectorAll('pre').forEach(function (pre) {
+        var code = pre.querySelector('code');
+        var fallback = pre.innerText;
+        var button = document.createElement('button');
+        button.className = 'cs-copy';
+        button.textContent = 'Copy';
+        button.addEventListener('click', function () {
+          handler.postMessage({ type: 'copy', text: code ? code.innerText : fallback });
+          button.textContent = 'Copied';
+          setTimeout(function () { button.textContent = 'Copy'; }, 1200);
+        });
+        pre.appendChild(button);
+      });
+    })();
+    """
+
     /// Renders each mermaid div via the explicit `mermaid.render(text)` API —
     /// reading `textContent` sidesteps entity-decoding ambiguity in mermaid's
     /// own DOM scanning. Render failures show the original source instead.
@@ -170,11 +207,14 @@ private struct HTMLWalker: MarkupWalker {
     }
 
     mutating func visitListItem(_ listItem: ListItem) {
+        // Disabled until the live overlay's script enables ticking; the
+        // source line lets a tick edit exactly that item.
+        let line = listItem.range.map { " data-line=\"\($0.lowerBound.line)\"" } ?? ""
         switch listItem.checkbox {
         case .checked:
-            html += "<li class=\"task\"><input type=\"checkbox\" checked disabled> "
+            html += "<li class=\"task\"><input type=\"checkbox\" checked disabled\(line)> "
         case .unchecked:
-            html += "<li class=\"task\"><input type=\"checkbox\" disabled> "
+            html += "<li class=\"task\"><input type=\"checkbox\" disabled\(line)> "
         case nil:
             html += "<li>"
         }

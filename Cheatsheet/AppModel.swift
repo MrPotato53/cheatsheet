@@ -255,6 +255,18 @@ final class AppModel {
                 overlay.openSearch(in: session)
                 overlay.setSearchQuery(String(rest[rest.index(after: separator)...]), in: session)
             }
+        } else if action.hasPrefix("divergeOriginal:"), UITestMode.isActive {
+            // "divergeOriginal:<sheet name>" — links the sheet's first file to
+            // a new original with different contents, as if the user picked
+            // the wrong file (the open panel can't be driven reliably).
+            let name = String(action.dropFirst("divergeOriginal:".count))
+            if let sheet = store.sheets.first(where: { $0.name == name }), let file = sheet.files.first {
+                let folder = store.rootURL.appendingPathComponent("Originals", isDirectory: true)
+                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                let original = folder.appendingPathComponent(file)
+                try? Data("Different contents from Cheatsheet's copy.\n".utf8).write(to: original)
+                Task { await store.linkOriginal(original, toFile: file, in: sheet.id) }
+            }
         } else if action.hasPrefix("state:") {
             postDebugState(nonce: String(action.dropFirst(6)))
         }
@@ -303,6 +315,10 @@ final class AppModel {
             "openActionSet": openSettingsWindowAction != nil,
             "windowCount": NSApp.windows.count,
             "cursor": Self.currentCursorName(),
+            // Pre-rendered markdown/HTML start pages not currently on screen.
+            "warmWebViews": WarmWebViews.cachedCount,
+            "warmWebViewsReady": WarmWebViews.readyCount,
+            "webRevealMs": WebRevealTiming.lastDelayMs ?? -1,
         ]
         payload["sessions"] = overlay.sessions.map { session -> [String: Any] in
             var info: [String: Any] = [

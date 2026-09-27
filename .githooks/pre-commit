@@ -1,0 +1,14 @@
+#!/bin/bash
+# Full suite (unit + UI) before every commit. The UI tests drive the real app,
+# so leave the Mac alone while they run.
+#   Unit tests only, once:  SKIP_UI_TESTS=1 git commit …
+#   Turn the hook off:      git config --unset core.hooksPath
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+if [ "${SKIP_UI_TESTS:-0}" = "1" ]; then
+  echo "pre-commit: SKIP_UI_TESTS=1, running unit tests only"
+  ./test.sh unit
+else
+  echo "pre-commit: running unit + UI tests (SKIP_UI_TESTS=1 for unit only)"
+  ./test.sh full
+fi

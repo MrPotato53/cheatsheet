@@ -317,3 +317,28 @@ final class OverlayUITests: CheatsheetUITestCase {
         goToPage(1, of: "Docs")
     }
 }
+
+// MARK: - Pre-rendered markdown/HTML start pages
+
+final class WarmWebPageUITests: CheatsheetUITestCase {
+    /// "Keep start page loaded" on a markdown page: the overlay adopts the
+    /// pre-rendered web view (so there's no load and no blank frame), and
+    /// gets it back on close for the next open.
+    @MainActor
+    func testKeptMarkdownStartPageIsAdoptedAndReturned() throws {
+        let markdown = "# Shortcuts\n\n" + (1...30).map { "- Item \($0): `⌘\($0 % 10)`" }.joined(separator: "\n")
+        launchApp(sheets: [
+            SeedSheet(name: "Guide", pages: [.text("guide.md", markdown)], keepsStartPageLoaded: true),
+        ])
+        waitForState("start page pre-rendered (painted) at launch") { $0.warmWebViewsReady == 1 }
+
+        for round in 1...3 {
+            openOverlay("Guide")
+            waitForState("round \(round): overlay took the pre-rendered view") { $0.warmWebViews == 0 }
+            let shown = waitForState("round \(round): page shown") { $0.webRevealMs >= 0 }
+            print("warm reveal round \(round): \(shown?.webRevealMs ?? -1) ms")
+            hideAllOverlays()
+            waitForState("round \(round): view returned for the next open") { $0.warmWebViews == 1 }
+        }
+    }
+}

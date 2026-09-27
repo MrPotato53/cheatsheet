@@ -31,6 +31,18 @@ nonisolated enum MediaKind: Equatable {
         }
     }
 
+    /// "a PDF", "a markdown file"… for messages.
+    var descriptionWithArticle: String {
+        switch self {
+        case .pdf: "a PDF"
+        case .image: "an image"
+        case .markdown: "a markdown file"
+        case .html: "an HTML page"
+        case .text: "a text file"
+        case .unsupported: "an unsupported file"
+        }
+    }
+
     /// Markup formats render formatted by default and can switch to showing
     /// their source text.
     var hasRawView: Bool {

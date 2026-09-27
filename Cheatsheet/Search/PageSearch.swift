@@ -197,21 +197,46 @@ nonisolated enum PageSearch {
     }
 
     static func pdfSelections(query: String, url: URL, pageIndex: Int) -> [PDFSelection] {
-        guard !query.isEmpty, let document = PDFCache.document(at: url) else { return [] }
-        return document.findString(query, withOptions: [.caseInsensitive]).filter { selection in
-            selection.pages.first.map { document.index(for: $0) } == pageIndex
-        }
+        pdfSelectionsByPage(query: query, url: url)[pageIndex] ?? []
     }
 
     private static func pdfMatchCountsByPage(query: String, url: URL) -> [Int: Int] {
+        pdfSelectionsByPage(query: query, url: url).mapValues(\.count)
+    }
+
+    /// One whole-document text search per (file, query): the match count and
+    /// every mounted page view (current page plus preloaded neighbors) share
+    /// it instead of each searching the full document again.
+    private static func pdfSelectionsByPage(query: String, url: URL) -> [Int: [PDFSelection]] {
+        guard !query.isEmpty else { return [:] }
+        let key = "\(FileStamp.versionedKey(for: url))\u{0}\(query)" as NSString
+        if let cached = pdfSearchCache.object(forKey: key) {
+            return cached.byPage
+        }
         guard let document = PDFCache.document(at: url) else { return [:] }
-        var counts: [Int: Int] = [:]
+        var byPage: [Int: [PDFSelection]] = [:]
         for selection in document.findString(query, withOptions: [.caseInsensitive]) {
             guard let page = selection.pages.first else { continue }
-            counts[document.index(for: page), default: 0] += 1
+            byPage[document.index(for: page), default: []].append(selection)
         }
-        return counts
+        pdfSearchCache.setObject(PDFSearchResult(byPage: byPage), forKey: key)
+        return byPage
     }
+
+    private nonisolated final class PDFSearchResult {
+        let byPage: [Int: [PDFSelection]]
+
+        init(byPage: [Int: [PDFSelection]]) {
+            self.byPage = byPage
+        }
+    }
+
+    /// Small: only the current query (and a few just typed) are ever reused.
+    private static let pdfSearchCache: NSCache<NSString, PDFSearchResult> = {
+        let cache = NSCache<NSString, PDFSearchResult>()
+        cache.countLimit = 16
+        return cache
+    }()
 
     private static let hiddenBlockPatterns: [NSRegularExpression] = [
         #"<!--.*?-->"#,

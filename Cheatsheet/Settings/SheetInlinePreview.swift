@@ -414,7 +414,7 @@ enum PageThumbnailRenderer {
 
 
     static func thumbnail(for page: SheetPage) -> NSImage? {
-        let key = "\(page.url.path)#\(page.pdfPageIndex ?? -1)" as NSString
+        let key = "\(FileStamp.versionedKey(for: page.url))#\(page.pdfPageIndex ?? -1)" as NSString
         if let cached = cache.object(forKey: key) {
             return cached
         }

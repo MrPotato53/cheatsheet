@@ -6,14 +6,23 @@ small DEBUG-only introspection channel.
 
 ## Running
 
+The shared `Cheatsheet` scheme has two test plans:
+
+| Plan | Runs | Use |
+| --- | --- | --- |
+| `Unit` (default) | `CheatsheetTests` only — ~10 s, no UI, works with the screen off | everyday development, `⌘U` |
+| `Full` | unit + `CheatsheetUITests` | before committing |
+
 ```sh
-xcodebuild test \
-  -project Cheatsheet.xcodeproj \
-  -scheme Cheatsheet \
-  -destination 'platform=macOS'
+./test.sh          # Unit plan
+./test.sh full     # Full plan
 ```
 
-or `⌘U` in Xcode. Notes:
+In Xcode, switch plans from the test navigator's plan menu. A pre-commit hook
+(`.githooks/pre-commit`, enabled with `git config core.hooksPath .githooks`)
+runs the Full plan; `SKIP_UI_TESTS=1 git commit …` runs only the unit tests.
+
+Notes for UI tests:
 
 - Run on a machine (or CI runner) where the test runner has **Accessibility /
   Automation permission** — XCUITest synthesizes real clicks, drags, and
