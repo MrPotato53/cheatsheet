@@ -28,6 +28,12 @@ final class OverlaySession: Identifiable {
     var isLoadingPages = false
     var search = OverlaySearchState()
     @ObservationIgnored var searchTask: Task<Void, Never>?
+    /// Non-nil while the current page is open for editing.
+    var editor: OverlayEditorState?
+    @ObservationIgnored var editorSaveTask: Task<Void, Never>?
+    /// Bumped when files change under mounted pages (a copy refreshed from
+    /// its original, an edit finished): pages remount and re-read them.
+    var contentRevision = 0
 
     @ObservationIgnored let panel = OverlayPanel()
     @ObservationIgnored var screen: NSScreen?
@@ -74,7 +80,7 @@ final class PanelMoveDelegate: NSObject, NSWindowDelegate {
 @Observable
 @MainActor
 final class OverlayController {
-    private let store: CheatsheetStore
+    let store: CheatsheetStore
     private(set) var sessions: [OverlaySession] = []
     private var lastPageIndex: [Cheatsheet.ID: Int] = [:]
     /// Fired whenever a session opens or closes; the hotkey manager uses it
@@ -83,13 +89,40 @@ final class OverlayController {
 
     // Pre-built pages and pre-decoded start-page images for sheets with
     // "keep start page loaded" — their opens skip the loading state entirely.
-    private struct WarmInputs: Hashable {
+    /// Everything a warmed entry was built from; any change re-warms it.
+    struct WarmInputs: Hashable {
         let files: [String]
         let pageOrder: [PageRef]
+        let rotation: Rotation
+        let rawFiles: Set<String>
         let startPage: StartPage
         let previewScale: Double
         let target: DisplayTarget
         let lastViewedIndex: Int
+        /// Per-file modification stamps: editing an imported copy in place
+        /// (a PDF gaining pages, a new image) changes the pages too.
+        let fileVersions: [String]
+
+        init(sheet: Cheatsheet, lastViewedIndex: Int, fileVersions: [String]) {
+            files = sheet.files
+            pageOrder = sheet.pageOrder
+            rotation = sheet.rotation
+            rawFiles = sheet.rawFiles
+            startPage = sheet.startPage
+            previewScale = sheet.previewScale
+            target = sheet.target
+            self.lastViewedIndex = lastViewedIndex
+            self.fileVersions = fileVersions
+        }
+
+        /// Whether pages built from these inputs equal those built from
+        /// `current` (the start index is recomputed anyway, and a stale
+        /// decoded image just misses its versioned key).
+        func hasSamePages(as current: WarmInputs) -> Bool {
+            files == current.files && pageOrder == current.pageOrder
+                && rotation == current.rotation && rawFiles == current.rawFiles
+                && fileVersions == current.fileVersions
+        }
     }
 
     private struct WarmEntry {
@@ -97,6 +130,8 @@ final class OverlayController {
         let startIndex: Int
         let inputs: WarmInputs
         let imageKey: String?
+        /// Pre-rendered markdown/HTML start page (WarmWebViews).
+        let webKey: String?
     }
 
     private var warmedStartPages: [Cheatsheet.ID: WarmEntry] = [:]
@@ -151,6 +186,9 @@ final class OverlayController {
 
         let session = OverlaySession(sheet: sheet)
         session.isLoadingPages = true
+        #if DEBUG
+        WebRevealTiming.overlayOpened()
+        #endif
         guard let screen = resolveScreen(for: sheet.target) else { return }
         session.screen = screen
 
@@ -188,12 +226,18 @@ final class OverlayController {
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         panel.makeKey()
+        // Becoming key would otherwise focus the first button (drawn with a
+        // focus ring); keys are handled at the panel level anyway.
+        panel.makeFirstResponder(nil)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.12
             panel.animator().alphaValue = 1
         }
+        checkOriginals(for: session)
 
-        if sheet.keepsStartPageLoaded, let warm = warmedStartPages[sheet.id] {
+        // A re-warm after an edit finishes asynchronously; until then the
+        // entry may describe the old pages, so it's used only if still current.
+        if sheet.keepsStartPageLoaded, let warm = warmedStartPages[sheet.id], warm.inputs.hasSamePages(as: warmInputs(for: sheet)) {
             // Warm path: pages and the start page's decoded image are ready.
             session.pages = warm.pages
             session.pageIndex = startIndex(for: sheet, pageCount: warm.pages.count)
@@ -228,6 +272,7 @@ final class OverlayController {
         let flaggedIDs = Set(flagged.map(\.id))
         warmedStartPages = warmedStartPages.filter { flaggedIDs.contains($0.key) }
         WarmPageImages.retain(only: Set(warmedStartPages.values.compactMap(\.imageKey)))
+        WarmWebViews.retain(only: Set(warmedStartPages.values.compactMap(\.webKey)))
         for sheet in flagged {
             warmStartPage(for: sheet)
         }
@@ -240,14 +285,8 @@ final class OverlayController {
         } else {
             lastViewedIndex = -1
         }
-        return WarmInputs(
-            files: sheet.files,
-            pageOrder: sheet.pageOrder,
-            startPage: sheet.startPage,
-            previewScale: sheet.previewScale,
-            target: sheet.target,
-            lastViewedIndex: lastViewedIndex
-        )
+        let fileVersions = sheet.files.map { FileStamp.versionedKey(for: store.fileURL(for: sheet, file: $0)) }
+        return WarmInputs(sheet: sheet, lastViewedIndex: lastViewedIndex, fileVersions: fileVersions)
     }
 
     private func warmStartPage(for sheet: Cheatsheet) {
@@ -260,7 +299,7 @@ final class OverlayController {
         let maxPixels = ImageFileView.displayMaxPixels()
         let screen = resolveScreen(for: sheet.target)
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1600, height: 1000)
-        let scale = min(max(sheet.previewScale, 0.2), 1.0)
+        let scale = Cheatsheet.clampedScale(sheet.previewScale)
         let renderSize = CGSize(width: visible.width * scale, height: visible.height * scale)
 
         Task { @MainActor [weak self] in
@@ -298,17 +337,25 @@ final class OverlayController {
                 imageKey = WarmPageImages.key(url: page.url, pdfPageIndex: page.pdfPageIndex)
                 WarmPageImages.set(image, url: page.url, pdfPageIndex: page.pdfPageIndex)
             }
+            // Rendered markup: a live web view, pre-rendered offscreen.
+            var webKey: String?
+            let kind = MediaKind.of(page.url)
+            if (kind == .markdown || kind == .html), !page.showsRaw {
+                webKey = WarmWebViews.prepare(url: page.url, format: .init(page.url), size: renderSize)
+            }
             self.warmedStartPages[sheet.id] = WarmEntry(
                 pages: pages,
                 startIndex: index,
                 inputs: inputs,
-                imageKey: imageKey
+                imageKey: imageKey,
+                webKey: webKey
             )
         }
     }
 
     func hide(_ session: OverlaySession) {
         guard sessions.contains(where: { $0 === session }) else { return }
+        endEditing(in: session)
         lastPageIndex[session.sheet.id] = session.pageIndex
         sessions.removeAll { $0 === session }
         onSessionsChanged?()
@@ -376,18 +423,21 @@ final class OverlayController {
 
     func goToPage(_ index: Int, in session: OverlaySession) {
         guard session.pages.indices.contains(index), index != session.pageIndex else { return }
+        endEditing(in: session)
         session.pageIndex = index
         updateFrame(for: session, animated: true)
     }
 
     func goToNextPage(in session: OverlaySession) {
         guard session.pageIndex < session.pages.count - 1 else { return }
+        endEditing(in: session)
         session.pageIndex += 1
         updateFrame(for: session, animated: true)
     }
 
     func goToPreviousPage(in session: OverlaySession) {
         guard session.pageIndex > 0 else { return }
+        endEditing(in: session)
         session.pageIndex -= 1
         updateFrame(for: session, animated: true)
     }
@@ -455,11 +505,11 @@ final class OverlayController {
     /// The user's size setting defines a maximum box placed at the sheet's
     /// stored position; the panel shrinks to the current page's aspect ratio
     /// within that box, so the position stays stable across different pages.
-    private func updateFrame(for session: OverlaySession, animated: Bool) {
+    func updateFrame(for session: OverlaySession, animated: Bool) {
         guard let screen = session.screen else { return }
         let visible = screen.visibleFrame
         let sheet = session.sheet
-        let scale = min(max(session.sessionScale ?? sheet.previewScale, 0.2), 1.0)
+        let scale = Cheatsheet.clampedScale(session.sessionScale ?? sheet.previewScale)
         let maxSize = CGSize(width: visible.width * scale, height: visible.height * scale)
         let size = fittedPanelSize(maxSize: maxSize, session: session)
 
@@ -647,7 +697,7 @@ final class OverlayController {
         guard visible.width > 0, visible.height > 0 else { return }
         let frame = session.panel.frame
         let rawScale = max(frame.width / visible.width, frame.height / visible.height)
-        let scale = min(max(Double(rawScale), 0.2), 1.0)
+        let scale = Cheatsheet.clampedScale(Double(rawScale))
 
         session.moveCommitTask?.cancel()
         var committedScale: Double?
@@ -727,6 +777,9 @@ final class OverlayController {
     // MARK: - Keys
 
     private func handleKeyEvent(_ event: NSEvent, in session: OverlaySession) -> Bool {
+        if let handled = handleEditorKeyEvent(event, in: session) {
+            return handled
+        }
         if let handled = handleSearchKeyEvent(event, in: session) {
             return handled
         }

@@ -33,8 +33,7 @@ actor ImageTextIndex {
     private var inFlight: [Key: Task<[RecognizedLine], Never>] = [:]
 
     func lines(for url: URL) async -> [RecognizedLine] {
-        let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-        let key = Key(path: url.path, modified: modified)
+        let key = Key(path: url.path, modified: FileStamp.modificationDate(of: url))
         if let cached = cache[key] { return cached }
         if let running = inFlight[key] { return await running.value }
         let task = Task.detached(priority: .utility) { await Self.recognize(url) }

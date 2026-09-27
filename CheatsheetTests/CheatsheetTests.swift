@@ -331,3 +331,99 @@ struct CheatsheetStoreTests {
         #expect(sheets.first?.rawFiles.isEmpty == true)
     }
 }
+
+@MainActor
+struct LibraryResilienceTests {
+    private func makeRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    private func backups(in root: URL) throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("library.backup-") }
+    }
+
+    // One unreadable entry (here: an activation mode this build doesn't
+    // know, as a newer build might write) must not take the others with it.
+    @Test func unreadableEntryIsSkippedAndOthersLoad() throws {
+        let json = """
+        [
+          {"id": "6F1B5DE1-9C2E-4B6E-BB59-3E9E9B8B0010", "name": "Good"},
+          {"id": "6F1B5DE1-9C2E-4B6E-BB59-3E9E9B8B0011", "name": "Future", "activation": "doubleTap"}
+        ]
+        """
+        let decoded = CheatsheetStore.decodeLibrary(Data(json.utf8))
+        #expect(decoded.sheets.map(\.name) == ["Good"])
+        #expect(decoded.isLossy)
+        #expect(!CheatsheetStore.decodeLibrary(Data("[]".utf8)).isLossy)
+    }
+
+    // Before the fix, a corrupt library decoded as empty and the next save
+    // overwrote it — every sheet gone. The original must survive.
+    @Test func corruptLibraryIsBackedUpBeforeBeingOverwritten() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = Data("{ not json".utf8)
+        try original.write(to: root.appendingPathComponent("library.json"))
+
+        let store = CheatsheetStore(rootDirectory: root)
+        #expect(store.sheets.isEmpty)
+        let backup = try #require(try backups(in: root).first)
+        #expect(try Data(contentsOf: backup) == original)
+
+        // A later save replaces library.json but leaves the backup alone.
+        store.moveSheets(fromOffsets: [], toOffset: 0)
+        #expect(try Data(contentsOf: root.appendingPathComponent("library.json")) != original)
+        #expect(try Data(contentsOf: backup) == original)
+    }
+
+    @Test func readableLibraryMakesNoBackup() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let json = #"[{"id": "6F1B5DE1-9C2E-4B6E-BB59-3E9E9B8B0012", "name": "Fine"}]"#
+        try Data(json.utf8).write(to: root.appendingPathComponent("library.json"))
+
+        let store = CheatsheetStore(rootDirectory: root)
+        #expect(store.sheets.map(\.name) == ["Fine"])
+        #expect(try backups(in: root).isEmpty)
+    }
+
+    @Test func duplicateNamesWithoutExtensionGetNoTrailingDot() {
+        #expect(CheatsheetStore.uniquedName(for: URL(filePath: "/tmp/notes"), counter: 1) == "notes-1")
+        #expect(CheatsheetStore.uniquedName(for: URL(filePath: "/tmp/page.pdf"), counter: 2) == "page-2.pdf")
+    }
+
+    // Drag-resizes used to clamp at 20% while the slider starts at 25%,
+    // leaving a stored size the slider couldn't show.
+    @Test func scaleClampMatchesTheSliderRange() {
+        #expect(Cheatsheet.clampedScale(0.1) == Cheatsheet.previewScaleRange.lowerBound)
+        #expect(Cheatsheet.clampedScale(0.2) == 0.25)
+        #expect(Cheatsheet.clampedScale(0.6) == 0.6)
+        #expect(Cheatsheet.clampedScale(1.4) == 1.0)
+    }
+
+    // Warmed start pages must be rebuilt (and not reused) when the sheet's
+    // rotation or raw/formatted choice changes, or a file is edited in place
+    // — all of these change the pages.
+    @Test func warmedPagesGoStaleOnRotationRawAndFileEdits() {
+        var sheet = Cheatsheet(name: "S")
+        sheet.files = ["a.md"]
+        func inputs(_ sheet: Cheatsheet, versions: [String] = ["a.md@1"]) -> OverlayController.WarmInputs {
+            OverlayController.WarmInputs(sheet: sheet, lastViewedIndex: 0, fileVersions: versions)
+        }
+        let warmed = inputs(sheet)
+        #expect(warmed.hasSamePages(as: inputs(sheet)))
+
+        var raw = sheet; raw.rawFiles = ["a.md"]
+        var rotated = sheet; rotated.rotation = .deg90
+        var resized = sheet; resized.previewScale = 0.9
+        #expect(!warmed.hasSamePages(as: inputs(raw)))
+        #expect(!warmed.hasSamePages(as: inputs(rotated)))
+        #expect(!warmed.hasSamePages(as: inputs(sheet, versions: ["a.md@2"])))
+        #expect(warmed.hasSamePages(as: inputs(resized)))
+        #expect(warmed != inputs(raw))
+        #expect(warmed != inputs(rotated))
+    }
+}

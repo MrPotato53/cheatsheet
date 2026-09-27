@@ -49,6 +49,7 @@ final class OverlayPanel: NSPanel {
     // Intercept before the responder chain: the SwiftUI hosting view otherwise
     // swallows Escape and arrow keys before they reach the window's keyDown.
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, performEditingShortcut(event) { return }
         if event.type == .keyDown, keyHandler?(event) == true { return }
         // In hold-to-show mode the hotkey's modifiers stay pressed; shift turns
         // wheel scrolls horizontal and command triggers zoom behaviors, which
@@ -61,6 +62,16 @@ final class OverlayPanel: NSPanel {
             return
         }
         super.sendEvent(event)
+    }
+
+    /// ⌘X/C/V/A/Z in the editor and search field (see EditingShortcut).
+    private func performEditingShortcut(_ event: NSEvent) -> Bool {
+        guard
+            firstResponder is NSText,
+            let key = event.charactersIgnoringModifiers,
+            let action = EditingShortcut.action(forKey: key, modifiers: event.modifierFlags)
+        else { return false }
+        return NSApp.sendAction(action, to: nil, from: self)
     }
 
     private func deliverUnmodifiedScroll(_ event: NSEvent) -> Bool {

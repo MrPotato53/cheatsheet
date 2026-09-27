@@ -49,8 +49,8 @@ struct MarkdownRendererTests {
         """
         let body = MarkdownRenderer.render(markdown).body
         #expect(body.contains("<ul>"))
-        #expect(body.contains("<li class=\"task\"><input type=\"checkbox\" checked disabled>"))
-        #expect(body.contains("<li class=\"task\"><input type=\"checkbox\" disabled>"))
+        #expect(body.contains("<li class=\"task\"><input type=\"checkbox\" checked disabled data-line="))
+        #expect(body.contains("<li class=\"task\"><input type=\"checkbox\" disabled data-line="))
         #expect(body.contains("<ol start=\"3\">"))
     }
 

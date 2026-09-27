@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import PDFKit
 import Testing
 
 @testable import Cheatsheet
@@ -194,5 +195,96 @@ struct PDFMatchGeometryTests {
     @Test func threeQuarterTurnMovesBottomLeftToBottomRight() {
         let rect = PDFMatchGeometry.unitRect(for: bottomLeft, mediaBox: box, rotation: 270)
         #expect(rect == CGRect(x: 0.9, y: 0.9, width: 0.1, height: 0.1))
+    }
+}
+
+@MainActor
+struct PDFSearchTests {
+    /// A PDF with a real text layer, one page per string.
+    private func makePDF(pages: [String]) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).pdf")
+        var box = CGRect(x: 0, y: 0, width: 400, height: 200)
+        let context = try #require(CGContext(url as CFURL, mediaBox: &box, nil))
+        for text in pages {
+            context.beginPDFPage(nil)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+            NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 20)])
+                .draw(at: NSPoint(x: 20, y: 100))
+            NSGraphicsContext.restoreGraphicsState()
+            context.endPDFPage()
+        }
+        context.closePDF()
+        return url
+    }
+
+    private func page(_ url: URL, _ index: Int) -> SheetPage {
+        SheetPage(url: url, pdfPageIndex: index, rotation: .deg0, flipHorizontal: false, flipVertical: false)
+    }
+
+    // Counts and per-page highlight boxes come from one shared search, so
+    // they must agree page by page — and repeated lookups stay consistent.
+    @Test func countsAndPerPageSelectionsAgree() async throws {
+        let url = try makePDF(pages: ["copy then paste copy", "nothing here", "Copy"])
+        defer { try? FileManager.default.removeItem(at: url) }
+        let pages = (0..<3).map { page(url, $0) }
+
+        #expect(await PageSearch.matchCounts(query: "copy", pages: pages) == [2, 0, 1])
+        #expect(PageSearch.pdfSelections(query: "copy", url: url, pageIndex: 0).count == 2)
+        #expect(PageSearch.pdfSelections(query: "copy", url: url, pageIndex: 1).isEmpty)
+        #expect(PageSearch.pdfSelections(query: "copy", url: url, pageIndex: 2).count == 1)
+        #expect(await PageSearch.matchCounts(query: "copy", pages: pages) == [2, 0, 1])
+        #expect(await PageSearch.matchCounts(query: "paste", pages: pages) == [1, 0, 0])
+        #expect(PageSearch.pdfSelections(query: "", url: url, pageIndex: 0).isEmpty)
+    }
+
+    /// Overwrites `url` in place with a new PDF, stamped a minute later so
+    /// the edit is distinguishable regardless of timestamp resolution.
+    private func editInPlace(_ url: URL, pages: [String]) throws {
+        let replacement = try makePDF(pages: pages)
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.moveItem(at: replacement, to: url)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: url.path)
+    }
+
+    // Requirement: editing an imported file in place (same path) shows the
+    // new content the next time the cheatsheet opens — pages, rendering,
+    // search and warmed start pages must not serve the old version.
+    @Test func editedFileIsReflectedEverywhereOnNextUse() async throws {
+        let url = try makePDF(pages: ["alpha"])
+        defer { try? FileManager.default.removeItem(at: url) }
+        var sheet = Cheatsheet(name: "S")
+        sheet.files = [url.lastPathComponent]
+        let mediaRoot = url.deletingLastPathComponent()
+        // buildPages resolves <mediaRoot>/<sheet id>/<file>; mirror that.
+        let sheetDir = mediaRoot.appendingPathComponent(sheet.id.uuidString)
+        try FileManager.default.createDirectory(at: sheetDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sheetDir) }
+        let copy = sheetDir.appendingPathComponent(url.lastPathComponent)
+        try FileManager.default.copyItem(at: url, to: copy)
+
+        #expect(CheatsheetStore.buildPages(for: sheet, mediaRoot: mediaRoot).count == 1)
+        #expect(await PageSearch.matchCounts(query: "alpha", pages: [page(copy, 0)]) == [1])
+        let warmKey = WarmPageImages.key(url: copy, pdfPageIndex: 0)
+
+        try editInPlace(copy, pages: ["beta", "beta alpha"])
+
+        #expect(PDFCache.document(at: copy)?.pageCount == 2)
+        #expect(CheatsheetStore.buildPages(for: sheet, mediaRoot: mediaRoot).count == 2)
+        let pages = [page(copy, 0), page(copy, 1)]
+        #expect(await PageSearch.matchCounts(query: "alpha", pages: pages) == [0, 1])
+        #expect(PageSearch.pdfSelections(query: "beta", url: copy, pageIndex: 1).count == 1)
+        #expect(WarmPageImages.key(url: copy, pdfPageIndex: 0) != warmKey)
+    }
+
+    @Test func resultsAreKeptPerFile() async throws {
+        let first = try makePDF(pages: ["alpha"])
+        let second = try makePDF(pages: ["alpha alpha"])
+        defer {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+        #expect(await PageSearch.matchCounts(query: "alpha", pages: [page(first, 0)]) == [1])
+        #expect(await PageSearch.matchCounts(query: "alpha", pages: [page(second, 0)]) == [2])
     }
 }

@@ -7,19 +7,21 @@ import SwiftUI
 /// Nonisolated: page building runs off the main thread at overlay open;
 /// NSCache and PDFDocument creation are thread-safe.
 nonisolated enum PDFCache {
-    static let documents: NSCache<NSURL, PDFDocument> = {
-        let cache = NSCache<NSURL, PDFDocument>()
+    /// Keyed by path and modification time, so a file edited in place is
+    /// reopened rather than served from the stale parse.
+    private static let documents: NSCache<NSString, PDFDocument> = {
+        let cache = NSCache<NSString, PDFDocument>()
         cache.countLimit = 4
         return cache
     }()
 
-
     static func document(at url: URL) -> PDFDocument? {
-        if let cached = documents.object(forKey: url as NSURL) {
+        let key = FileStamp.versionedKey(for: url) as NSString
+        if let cached = documents.object(forKey: key) {
             return cached
         }
         guard let loaded = PDFDocument(url: url) else { return nil }
-        documents.setObject(loaded, forKey: url as NSURL)
+        documents.setObject(loaded, forKey: key)
         return loaded
     }
 }

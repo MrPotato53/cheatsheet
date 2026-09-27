@@ -1,0 +1,31 @@
+{
+  "configurations" : [
+    {
+      "id" : "5B0E8C4A-1D2F-4E6A-9B3C-7A1D2E3F4A02",
+      "name" : "Default",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:Cheatsheet.xcodeproj",
+        "identifier" : "01DA82752FF76BB60093021F",
+        "name" : "CheatsheetTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Cheatsheet.xcodeproj",
+        "identifier" : "01DA827F2FF76BB60093021F",
+        "name" : "CheatsheetUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

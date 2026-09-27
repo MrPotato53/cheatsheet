@@ -50,25 +50,26 @@ struct OverlayContentView: View {
                 ContentUnavailableView("Nothing to show", systemImage: "doc")
             } else {
                 ForEach(preloadedIndices, id: \.self) { index in
-                    let page = session.pages[index]
-                    MediaPageView(
-                        page: page,
-                        highlight: session.search.highlight(forPage: index),
-                        isInteractive: index == session.pageIndex
-                    )
-                        .pageTransform(page)
-                        .opacity(index == session.pageIndex ? 1 : 0)
-                        .allowsHitTesting(index == session.pageIndex)
-                        .id(page)
+                    pageView(at: index)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.top, hasDragStrip ? Self.dragStripHeight : 0)
         .background(.regularMaterial)
+        // Ticking a checkbox in rendered markdown edits the file; only the
+        // live overlay offers it (settings previews stay read-only).
+        .environment(\.markdownTaskHandler) { [controller, session] url, line, checked in
+            controller.setTask(atLine: line, checked: checked, url: url, in: session)
+        }
         .overlay(alignment: .bottom) {
-            if session.pages.count > 1 {
+            if session.pages.count > 1, session.editor == nil {
                 pageControls
+            }
+        }
+        .overlay(alignment: .bottomLeading) {
+            if let editor = session.editor {
+                editorStatus(editor)
             }
         }
         .overlay(alignment: .top) {
@@ -76,19 +77,11 @@ struct OverlayContentView: View {
                 dragHandle
             }
         }
+        .overlay(alignment: .bottom) {
+            reviewBanner
+        }
         .overlay(alignment: .topTrailing) {
-            HStack(spacing: 6) {
-                if session.search.isActive {
-                    searchBar
-                } else if hasSearchablePages {
-                    searchButton
-                }
-                if let currentPage, MediaKind.of(currentPage.url).hasRawView {
-                    rawToggleButton(for: currentPage)
-                }
-                pinButton
-            }
-            .padding(8)
+            OverlayToolbar(session: session, controller: controller, isOverlayHovered: isHovering)
         }
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
@@ -98,6 +91,69 @@ struct OverlayContentView: View {
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("overlay.root")
+    }
+
+    /// Remounts a page when its file changed underneath it.
+    private struct PageMount: Hashable {
+        let page: SheetPage
+        let revision: Int
+    }
+
+    @ViewBuilder
+    private func pageView(at index: Int) -> some View {
+        let page = session.pages[index]
+        if index == session.pageIndex, let editor = session.editor {
+            // Edited untransformed: rotated or mirrored text isn't editable.
+            OverlayTextEditor(initialText: editor.text) { text in
+                controller.editorTextChanged(text, in: session)
+            }
+            .padding(8)
+            .id(editor.url)
+        } else {
+            MediaPageView(
+                page: page,
+                highlight: session.search.highlight(forPage: index),
+                isInteractive: index == session.pageIndex
+            )
+            .pageTransform(page)
+            .opacity(index == session.pageIndex ? 1 : 0)
+            .allowsHitTesting(index == session.pageIndex)
+            .id(PageMount(page: page, revision: session.contentRevision))
+        }
+    }
+
+    private func editorStatus(_ editor: OverlayEditorState) -> some View {
+        let warning = editor.lastSave?.isWarning == true
+        return HStack(spacing: 6) {
+            if warning {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            }
+            Text(editor.isDirty ? "Editing…" : editor.lastSave?.statusText ?? "Editing")
+            Text("· esc to finish")
+                .foregroundStyle(.tertiary)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.thinMaterial, in: Capsule())
+        .padding(10)
+        .accessibilityIdentifier("overlay.editorStatus")
+    }
+
+    @ViewBuilder
+    private var reviewBanner: some View {
+        if session.editor == nil,
+           !session.isLoadingPages,
+           let page = session.currentPage,
+           case .needsReview(let originalChanged) = controller.syncState(of: page, in: session) {
+            SyncReviewBanner(fileName: page.url.lastPathComponent, originalChanged: originalChanged) { resolution in
+                controller.resolveSync(resolution, for: page, in: session)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, session.pages.count > 1 ? 52 : 12)
+        }
     }
 
     private var dragHandle: some View {
@@ -118,117 +174,6 @@ struct OverlayContentView: View {
         .help("Drag to move")
     }
 
-    private var hasSearchablePages: Bool {
-        session.pages.contains { MediaKind.of($0.url) != .unsupported }
-    }
-
-    private var searchButton: some View {
-        Button {
-            controller.openSearch(in: session)
-        } label: {
-            Image(systemName: "magnifyingglass")
-                .frame(width: 18, height: 18)
-        }
-        .buttonStyle(.borderless)
-        .pointingHandCursor()
-        .accessibilityIdentifier("overlay.search")
-        .padding(5)
-        .background(.thinMaterial, in: Circle())
-        .opacity(isHovering ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: isHovering)
-        .help("Search pages (⌘F)")
-    }
-
-    private var searchBar: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            OverlaySearchField(
-                text: session.search.query,
-                focusRequest: session.search.focusRequest
-            ) { controller.setSearchQuery($0, in: session) }
-            .frame(width: 140)
-            if let status = session.search.statusText {
-                Text(status)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-                    .accessibilityIdentifier("overlay.search.status")
-            }
-            Group {
-                Button {
-                    controller.stepSearch(in: session, forward: false)
-                } label: {
-                    Image(systemName: "chevron.up")
-                }
-                .help("Previous match (⇧↩)")
-                .accessibilityIdentifier("overlay.search.previous")
-                Button {
-                    controller.stepSearch(in: session, forward: true)
-                } label: {
-                    Image(systemName: "chevron.down")
-                }
-                .help("Next match (↩)")
-                .accessibilityIdentifier("overlay.search.next")
-            }
-            .disabled(session.search.matches.total == 0)
-            Button {
-                controller.closeSearch(in: session)
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.secondary)
-            }
-            .help("Close search (esc)")
-            .accessibilityIdentifier("overlay.search.close")
-        }
-        .buttonStyle(.borderless)
-        .pointingHandCursor()
-        .padding(.horizontal, 10)
-        .frame(height: 28)
-        .background(.thinMaterial, in: Capsule())
-    }
-
-    private var currentPage: SheetPage? {
-        guard !session.isLoadingPages, session.pages.indices.contains(session.pageIndex) else { return nil }
-        return session.pages[session.pageIndex]
-    }
-
-    private func rawToggleButton(for page: SheetPage) -> some View {
-        Button {
-            controller.toggleRaw(session)
-        } label: {
-            Image(systemName: "chevron.left.forwardslash.chevron.right")
-                .frame(width: 18, height: 18)
-                .foregroundStyle(page.showsRaw ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
-        }
-        .buttonStyle(.borderless)
-        .pointingHandCursor()
-        .accessibilityIdentifier("overlay.rawToggle")
-        .accessibilityValue(page.showsRaw ? "raw" : "formatted")
-        .padding(5)
-        .background(.thinMaterial, in: Circle())
-        .opacity(isHovering ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: isHovering)
-        .help(page.showsRaw ? "Show formatted" : "Show raw source")
-    }
-
-    private var pinButton: some View {
-        Button {
-            controller.togglePin(session)
-        } label: {
-            Image(systemName: session.isPinned ? "pin.fill" : "pin")
-                .frame(width: 18, height: 18)
-        }
-        .buttonStyle(.borderless)
-        .pointingHandCursor()
-        .accessibilityIdentifier("overlay.pin")
-        .padding(5)
-        .background(.thinMaterial, in: Circle())
-        .opacity(session.isPinned || isHovering ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: isHovering)
-        .help(session.isPinned ? "Unpin — overlay dismisses normally again" : "Pin — overlay stays open until unpinned")
-    }
-
     private var pageControls: some View {
         HStack(spacing: 12) {
             Button {
@@ -236,6 +181,7 @@ struct OverlayContentView: View {
             } label: {
                 Image(systemName: "chevron.left")
             }
+            .focusable(false)
             .disabled(session.pageIndex == 0)
             .accessibilityIdentifier("overlay.previousPage")
 
@@ -249,6 +195,7 @@ struct OverlayContentView: View {
             } label: {
                 Image(systemName: "chevron.right")
             }
+            .focusable(false)
             .disabled(session.pageIndex >= session.pages.count - 1)
             .accessibilityIdentifier("overlay.nextPage")
         }

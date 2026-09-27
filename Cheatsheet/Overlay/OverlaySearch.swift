@@ -35,6 +35,7 @@ extension OverlayController {
     private static let searchDebounce: Duration = .milliseconds(120)
 
     func openSearch(in session: OverlaySession) {
+        endEditing(in: session)
         session.search.isActive = true
         session.search.focusRequest += 1
         session.panel.makeKey()

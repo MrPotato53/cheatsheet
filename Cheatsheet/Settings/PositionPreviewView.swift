@@ -11,7 +11,7 @@ struct PositionPreviewView: View {
         GeometryReader { geometry in
             let width = geometry.size.width
             let height = geometry.size.height
-            let scale = min(max(sheet.previewScale, 0.2), 1.0)
+            let scale = Cheatsheet.clampedScale(sheet.previewScale)
             let boxWidth = width * scale
             let boxHeight = height * scale
             let center = clampedCenter(sheet.position, scale: scale)

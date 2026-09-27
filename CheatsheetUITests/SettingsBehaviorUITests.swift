@@ -418,3 +418,60 @@ private extension CGSize {
         abs(width - other.width) <= tolerance && abs(height - other.height) <= tolerance
     }
 }
+
+// MARK: - Sync with original files
+
+final class OriginalSyncUITests: CheatsheetUITestCase {
+    private func screenshot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: settingsWindow.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    /// Flipping the General toggle must update file status in the
+    /// Cheatsheets tab without any other interaction; a mismatched original
+    /// offers a review sheet whose choices work.
+    @MainActor
+    func testSyncToggleUpdatesStatusAndReviewSheetResolves() throws {
+        launchApp(sheets: [SeedSheet(name: "Notes", pages: [.text("todo.md", "- [ ] milk")])])
+        openSettings()
+        let toggle = settingsWindow.switches["general.syncWithOriginals"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        toggle.click() // on
+
+        openCheatsheetsTab()
+        selectSheetInSidebar("Notes")
+        // Seeded files have no original: "Copy only", shown straight away.
+        let copyOnly = settingsWindow.staticTexts["detail.copyOnly"]
+        XCTAssertTrue(copyOnly.waitForExistence(timeout: 5), "status didn't appear after enabling sync")
+        screenshot("1 copy only after enabling sync")
+
+        postDebug("divergeOriginal:Notes")
+        let review = settingsWindow.buttons["detail.reviewSync"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5), "mismatched original should ask for review")
+        screenshot("2 review needed")
+        review.click()
+
+        let unlink = app.buttons["review.unlink"]
+        XCTAssertTrue(unlink.waitForExistence(timeout: 5), "review sheet didn't open")
+        XCTAssertTrue(app.buttons["review.useOriginal"].exists)
+        XCTAssertTrue(app.buttons["review.useCopy"].exists)
+        XCTAssertTrue(app.buttons["review.keepBoth"].exists)
+        let sheetShot = XCTAttachment(screenshot: app.sheets.firstMatch.screenshot())
+        sheetShot.name = "3 review sheet"
+        sheetShot.lifetime = .keepAlways
+        add(sheetShot)
+
+        unlink.click()
+        XCTAssertTrue(copyOnly.waitForExistence(timeout: 5), "unlinked file should be copy only")
+
+        // Off again: status disappears immediately, without other clicks.
+        openSettingsTab("General")
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click() // off
+        openSettingsTab("Cheatsheets")
+        XCTAssertTrue(settingsWindow.staticTexts["todo.md"].waitForExistence(timeout: 5))
+        XCTAssertFalse(copyOnly.exists, "status should clear as soon as sync is off")
+        screenshot("4 sync off")
+    }
+}

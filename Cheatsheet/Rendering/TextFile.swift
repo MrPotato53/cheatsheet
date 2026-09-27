@@ -16,3 +16,18 @@ nonisolated enum TextFile {
         return String(decoding: data, as: UTF8.self)
     }
 }
+
+/// A file's last-modified time, for keying caches: an imported copy edited
+/// in place keeps its path, so path-only keys would keep serving the old
+/// content. Read fresh from the file system each time (URL resource values
+/// are cached per URL instance and can go stale).
+nonisolated enum FileStamp {
+    static func modificationDate(of url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
+    /// "<path>@<mtime>", distinct for every version of the file.
+    static func versionedKey(for url: URL) -> String {
+        "\(url.path)@\(modificationDate(of: url)?.timeIntervalSinceReferenceDate ?? 0)"
+    }
+}

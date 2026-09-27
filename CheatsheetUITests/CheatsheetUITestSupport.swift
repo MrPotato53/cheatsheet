@@ -113,6 +113,11 @@ struct AppState: Decodable {
     let dockIconPolicy: String
     /// "pointingHand", "openHand", "arrow", "iBeam" or "other".
     let cursor: String
+    /// Pre-rendered markdown/HTML start pages waiting to be adopted.
+    let warmWebViews: Int
+    let warmWebViewsReady: Int
+    /// Overlay open → its web page visible, ms (-1: not yet).
+    let webRevealMs: Double
     let sessions: [Session]
     let sheets: [Sheet]
 

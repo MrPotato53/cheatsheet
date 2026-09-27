@@ -17,6 +17,14 @@ struct CheatsheetsSettingsView: View {
     @State private var importTarget: ImportTarget = .newSheet
     @State private var isDeleteConfirmationPresented = false
     @State private var pendingDeletion: Cheatsheet?
+    @State private var isTransferring = false
+    @State private var transferAlert: TransferAlert?
+
+    struct TransferAlert: Identifiable {
+        let id = UUID()
+        let title: String
+        let message: String
+    }
 
     static let importableTypes: [UTType] = {
         var types: [UTType] = [.pdf, .image, .plainText, .text, .sourceCode]
@@ -71,6 +79,9 @@ struct CheatsheetsSettingsView: View {
         } message: { sheet in
             Text("“\(sheet.name)” and its imported files will be removed.")
         }
+        .alert(item: $transferAlert) { alert in
+            Alert(title: Text(alert.title), message: Text(alert.message))
+        }
     }
 
     private var selectedSheet: Cheatsheet? {
@@ -122,12 +133,23 @@ struct CheatsheetsSettingsView: View {
                 .disabled(selectedSheet == nil)
                 .accessibilityIdentifier("sheets.remove")
                 Spacer()
+                if isTransferring {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                transferMenu
             }
             .buttonStyle(.borderless)
             .padding(6)
         }
         .dropDestination(for: URL.self) { urls, _ in
             guard !urls.isEmpty else { return false }
+            // Dropped exports are imported, not added as unreadable pages.
+            let archives = urls.filter(LibraryTransferPanels.isArchive)
+            if !archives.isEmpty {
+                importArchives(archives)
+                return true
+            }
             if let sheet = HTMLResourceAccess.withResourceAccess(for: urls, { store.addSheet(files: urls) }) {
                 selection = sheet.id
                 return true
@@ -139,10 +161,16 @@ struct CheatsheetsSettingsView: View {
     private var detail: some View {
         Group {
             if let selectedSheet {
-                CheatsheetDetailView(sheet: binding(for: selectedSheet)) {
-                    importTarget = .existingSheet(selectedSheet.id)
-                    isImporterPresented = true
-                }
+                CheatsheetDetailView(
+                    sheet: binding(for: selectedSheet),
+                    requestAddFiles: {
+                        importTarget = .existingSheet(selectedSheet.id)
+                        isImporterPresented = true
+                    },
+                    requestExport: {
+                        export([selectedSheet.id], suggestedName: selectedSheet.name)
+                    }
+                )
                 .id(selectedSheet.id)
             } else {
                 VStack(spacing: 16) {
@@ -165,6 +193,77 @@ struct CheatsheetsSettingsView: View {
                     .controlSize(.large)
                 }
             }
+        }
+    }
+
+    // MARK: - Export & import
+
+    /// One quiet menu instead of more bar buttons: import/export are
+    /// occasional actions.
+    private var transferMenu: some View {
+        Menu {
+            Button("Import Cheatsheets…") {
+                importArchives(LibraryTransferPanels.chooseArchivesToImport())
+            }
+            .accessibilityIdentifier("sheets.import")
+            Button("Export All Cheatsheets…") {
+                export(Set(store.sheets.map(\.id)), suggestedName: LibraryTransferPanels.exportAllName())
+            }
+            .disabled(store.sheets.isEmpty)
+            .accessibilityIdentifier("sheets.exportAll")
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(isTransferring)
+        .help("Import or export cheatsheets")
+        .accessibilityIdentifier("sheets.transferMenu")
+    }
+
+    private func export(_ ids: Set<Cheatsheet.ID>, suggestedName: String) {
+        guard !isTransferring,
+              let destination = LibraryTransferPanels.chooseExportDestination(suggestedName: suggestedName)
+        else { return }
+        isTransferring = true
+        Task {
+            defer { isTransferring = false }
+            do {
+                try await store.export(sheetIDs: ids, to: destination)
+            } catch {
+                transferAlert = TransferAlert(title: "Export Failed", message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func importArchives(_ urls: [URL]) {
+        guard !isTransferring, !urls.isEmpty else { return }
+        isTransferring = true
+        Task {
+            defer { isTransferring = false }
+            var imported: [Cheatsheet.ID] = []
+            var messages: [String] = []
+            for url in urls {
+                do {
+                    let summary = try await store.importArchive(at: url)
+                    imported += summary.importedIDs
+                    messages += summary.notes
+                } catch {
+                    messages.append("“\(url.lastPathComponent)”: \(error.localizedDescription)")
+                }
+            }
+            if let first = imported.first {
+                selection = first
+            }
+            guard !messages.isEmpty else { return }
+            let count = imported.count
+            transferAlert = TransferAlert(
+                title: count == 0
+                    ? "Import Failed"
+                    : "Imported \(count) Cheatsheet\(count == 1 ? "" : "s")",
+                message: messages.joined(separator: "\n\n")
+            )
         }
     }
 

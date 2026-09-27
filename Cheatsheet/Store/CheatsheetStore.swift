@@ -13,8 +13,18 @@ final class CheatsheetStore {
     var onChange: (@MainActor () -> Void)?
 
     let rootURL: URL
+    /// App settings (sync with originals); injectable so tests control it.
+    let defaults: UserDefaults
+    /// Each linked file's relationship to its original, from the latest
+    /// check. Missing entries haven't been checked yet this launch.
+    var syncStates: [Cheatsheet.ID: [String: FileSyncState]] = [:]
+    /// "Keep cheatsheets in sync with original files". Held here (not read
+    /// from defaults on demand) so views showing file status observe it.
+    private(set) var syncsWithOriginals: Bool
 
-    init(rootDirectory: URL? = nil) {
+    init(rootDirectory: URL? = nil, defaults: UserDefaults = AppDefaults.store) {
+        self.defaults = defaults
+        syncsWithOriginals = defaults.bool(forKey: Self.syncDefaultsKey)
         if let rootDirectory {
             rootURL = rootDirectory
         } else if let testRoot = UITestMode.storeRoot {
@@ -55,7 +65,41 @@ final class CheatsheetStore {
 
     private func load() {
         guard let data = try? Data(contentsOf: libraryURL) else { return }
-        sheets = (try? JSONDecoder().decode([Cheatsheet].self, from: data)) ?? []
+        let decoded = Self.decodeLibrary(data)
+        sheets = decoded.sheets
+        // The next persist rewrites the library from what loaded; keep the
+        // original so entries that couldn't be read (corruption, or a library
+        // written by a newer build) aren't silently lost.
+        if decoded.isLossy {
+            backUpLibrary()
+        }
+    }
+
+    /// Decodes each sheet independently, so one unreadable entry costs only
+    /// itself rather than the whole library.
+    nonisolated static func decodeLibrary(_ data: Data) -> (sheets: [Cheatsheet], isLossy: Bool) {
+        guard let entries = try? JSONDecoder().decode([LossySheet].self, from: data) else {
+            return ([], true)
+        }
+        let sheets = entries.compactMap(\.sheet)
+        return (sheets, sheets.count != entries.count)
+    }
+
+    private nonisolated struct LossySheet: Decodable {
+        let sheet: Cheatsheet?
+
+        init(from decoder: Decoder) throws {
+            sheet = try? Cheatsheet(from: decoder)
+        }
+    }
+
+    private func backUpLibrary() {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let backup = rootURL.appendingPathComponent("library.backup-\(formatter.string(from: Date())).json")
+        guard !FileManager.default.fileExists(atPath: backup.path) else { return }
+        try? FileManager.default.copyItem(at: libraryURL, to: backup)
     }
 
     private func persist() {
@@ -68,13 +112,28 @@ final class CheatsheetStore {
         onChange?()
     }
 
+    /// Turning sync on checks every link right away, so file status in
+    /// settings is current by the time the user looks; off clears it.
+    func setSyncsWithOriginals(_ isOn: Bool) async {
+        guard isOn != syncsWithOriginals else { return }
+        syncsWithOriginals = isOn
+        defaults.set(isOn, forKey: Self.syncDefaultsKey)
+        syncStates = [:]
+        touch()
+        if isOn {
+            await checkAllLinks()
+        }
+    }
+
     // MARK: - Mutations
 
     @discardableResult
     func addSheet(files urls: [URL], assignDefaultShortcut: Bool = true) -> Cheatsheet? {
         guard !urls.isEmpty else { return nil }
         var sheet = Cheatsheet(name: urls[0].deletingPathExtension().lastPathComponent)
-        sheet.files = copyFiles(urls, into: sheet)
+        let copied = copyFiles(urls, into: sheet)
+        sheet.files = copied.map(\.name)
+        sheet.links = Self.links(of: copied)
         guard !sheet.files.isEmpty else { return nil }
         sheets.append(sheet)
         if assignDefaultShortcut, let digit = Self.firstFreeDigit(taken: takenDigits()) {
@@ -87,15 +146,25 @@ final class CheatsheetStore {
         return sheet
     }
 
-    func addFiles(_ urls: [URL], to sheetID: Cheatsheet.ID) {
-        guard let index = sheets.firstIndex(where: { $0.id == sheetID }) else { return }
-        let copied = copyFiles(urls, into: sheets[index])
-        guard !copied.isEmpty else { return }
-        sheets[index].files.append(contentsOf: copied)
+    /// `linksOriginals` false for files that are Cheatsheet's own (e.g. the
+    /// kept version from resolving a sync conflict), not a user's original.
+    @discardableResult
+    func addFiles(_ urls: [URL], to sheetID: Cheatsheet.ID, linksOriginals: Bool = true) -> [String] {
+        guard let index = sheets.firstIndex(where: { $0.id == sheetID }) else { return [] }
+        let copied = copyFiles(urls, into: sheets[index], linksOriginals: linksOriginals)
+        guard !copied.isEmpty else { return [] }
+        let names = copied.map(\.name)
+        sheets[index].files.append(contentsOf: names)
+        sheets[index].links.merge(Self.links(of: copied)) { _, new in new }
         if !sheets[index].pageOrder.isEmpty {
-            sheets[index].pageOrder += Self.expandRefs(files: copied, for: sheets[index], mediaRoot: mediaRoot)
+            sheets[index].pageOrder += Self.expandRefs(files: names, for: sheets[index], mediaRoot: mediaRoot)
         }
         persist()
+        return names
+    }
+
+    private static func links(of copied: [CopiedFile]) -> [String: FileLink] {
+        Dictionary(uniqueKeysWithValues: copied.compactMap { file in file.link.map { (file.name, $0) } })
     }
 
     func removeFile(_ file: String, from sheetID: Cheatsheet.ID) {
@@ -107,6 +176,8 @@ final class CheatsheetStore {
         removeOrphanedResources(removedRoots, in: sheets[index])
         sheets[index].pageOrder.removeAll { $0.file == file }
         sheets[index].rawFiles.remove(file)
+        sheets[index].links[file] = nil
+        syncStates[sheetID]?[file] = nil
         persist()
     }
 
@@ -190,6 +261,58 @@ final class CheatsheetStore {
         persist()
     }
 
+    /// Adds unpacked export entries as new sheets (fresh IDs, so importing
+    /// the same export twice never collides), moving their files into the
+    /// library. One persist for the whole batch.
+    func adoptImported(
+        _ unpacked: LibraryArchive.Unpacked,
+        connectedScreens: [(uuid: String, name: String)]
+    ) -> ImportSummary {
+        var summary = ImportSummary(skippedEntries: unpacked.skippedEntries)
+        for item in unpacked.sheets {
+            var sheet = item.sheet
+            sheet.id = UUID()
+            sheet.target = LibraryArchive.matchedTarget(sheet.target, connected: connectedScreens)
+            let destination = mediaRoot.appendingPathComponent(sheet.id.uuidString, isDirectory: true)
+            do {
+                try FileManager.default.moveItem(at: item.folder, to: destination)
+            } catch {
+                summary.skippedEntries += 1
+                continue
+            }
+            sheets.append(sheet)
+            if !assignImportedShortcut(item.shortcut, to: sheet) {
+                summary.reassignedShortcuts.append(sheet.name)
+            }
+            summary.importedIDs.append(sheet.id)
+            summary.missingFileCount += item.missingFiles.count
+        }
+        if !summary.importedIDs.isEmpty {
+            persist()
+        }
+        return summary
+    }
+
+    /// Keeps the exported shortcut when it's free here. A taken one is
+    /// replaced by the next free ⌘⇧digit, as for a new sheet. Returns false
+    /// when the sheet didn't get the shortcut it was exported with.
+    private func assignImportedShortcut(_ shortcut: KeyboardShortcuts.Shortcut?, to sheet: Cheatsheet) -> Bool {
+        guard let shortcut else { return true }
+        let isTaken = conflictingSheet(with: shortcut, excluding: sheet.id) != nil
+            || shortcut == KeyboardShortcuts.getShortcut(for: .togglePin)
+        if !isTaken {
+            KeyboardShortcuts.setShortcut(shortcut, for: sheet.shortcutName)
+            return true
+        }
+        if let digit = Self.firstFreeDigit(taken: takenDigits()) {
+            KeyboardShortcuts.setShortcut(
+                KeyboardShortcuts.Shortcut(Self.key(forDigit: digit), modifiers: [.command, .shift]),
+                for: sheet.shortcutName
+            )
+        }
+        return false
+    }
+
     func moveSheets(fromOffsets: IndexSet, toOffset: Int) {
         sheets.move(fromOffsets: fromOffsets, toOffset: toOffset)
         persist()
@@ -202,6 +325,7 @@ final class CheatsheetStore {
             at: mediaRoot.appendingPathComponent(sheet.id.uuidString, isDirectory: true)
         )
         sheets.remove(at: index)
+        syncStates[sheet.id] = nil
         persist()
     }
 
@@ -217,10 +341,17 @@ final class CheatsheetStore {
         }
     }
 
-    private func copyFiles(_ urls: [URL], into sheet: Cheatsheet) -> [String] {
+    private struct CopiedFile {
+        let name: String
+        let link: FileLink?
+    }
+
+    /// Copies are always made; a link to each original is recorded too, so
+    /// turning on sync later can follow files added before it was on.
+    private func copyFiles(_ urls: [URL], into sheet: Cheatsheet, linksOriginals: Bool = true) -> [CopiedFile] {
         let directory = mediaRoot.appendingPathComponent(sheet.id.uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        var names: [String] = []
+        var copied: [CopiedFile] = []
         for url in urls {
             let accessing = url.startAccessingSecurityScopedResource()
             defer {
@@ -229,12 +360,14 @@ final class CheatsheetStore {
             var name = url.lastPathComponent
             var counter = 1
             while FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path) {
-                name = "\(url.deletingPathExtension().lastPathComponent)-\(counter).\(url.pathExtension)"
+                name = Self.uniquedName(for: url, counter: counter)
                 counter += 1
             }
             do {
-                try FileManager.default.copyItem(at: url, to: directory.appendingPathComponent(name))
-                names.append(name)
+                let copy = directory.appendingPathComponent(name)
+                try FileManager.default.copyItem(at: url, to: copy)
+                let link = linksOriginals ? OriginalFiles.makeLink(original: url, copy: copy) : nil
+                copied.append(CopiedFile(name: name, link: link))
                 if MediaKind.of(url) == .html {
                     HTMLResources.copyResources(ofPageAt: url, into: directory)
                 }
@@ -242,7 +375,15 @@ final class CheatsheetStore {
                 continue
             }
         }
-        return names
+        return copied
+    }
+
+    /// "page-1.pdf" for the second "page.pdf"; extensionless names get no
+    /// trailing dot ("notes-1").
+    nonisolated static func uniquedName(for url: URL, counter: Int) -> String {
+        let base = url.deletingPathExtension().lastPathComponent
+        let ext = url.pathExtension
+        return ext.isEmpty ? "\(base)-\(counter)" : "\(base)-\(counter).\(ext)"
     }
 
     // MARK: - Shortcuts
