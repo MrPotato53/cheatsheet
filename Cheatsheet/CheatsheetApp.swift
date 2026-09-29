@@ -57,10 +57,7 @@ struct CheatsheetApp: App {
             Divider()
         }
         Button("Settings…") {
-            openWindow(id: WindowID.settings)
-            // Activation from a menu bar extra races window creation; retry
-            // until the window exists and is key.
-            AppModel.shared.focusSettingsSoon()
+            AppModel.shared.openSettings()
         }
         Divider()
         Button("Quit Cheatsheet") {

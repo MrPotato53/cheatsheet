@@ -8,6 +8,7 @@ struct MediaPageView: View {
     /// False for preloaded neighbor pages kept mounted but invisible; their
     /// AppKit views must not claim the cursor over the visible page.
     var isInteractive = true
+    @Environment(\.isLiveOverlay) private var isLiveOverlay
 
     var body: some View {
         switch MediaKind.of(page.url) {
@@ -23,6 +24,8 @@ struct MediaPageView: View {
             MarkdownWebView(url: page.url, format: .html, highlight: highlight, isInteractive: isInteractive)
         case .text:
             TextFileView(url: page.url, highlight: highlight, isInteractive: isInteractive)
+        case .webpage:
+            WebPageView(fileURL: page.url, isInteractive: isInteractive, keepsLoaded: isLiveOverlay)
         case .unsupported:
             ContentUnavailableView(
                 "Can't display \(page.url.lastPathComponent)",

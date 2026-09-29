@@ -10,8 +10,8 @@ nonisolated enum DockIconPolicy: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .never: "No Dock icon"
-        case .whenSettingsOpen: "Only while settings is open"
+        case .never: "Never"
+        case .whenSettingsOpen: "While settings are open"
         case .always: "Always"
         }
     }
@@ -24,6 +24,7 @@ final class AppModel {
     let store: CheatsheetStore
     let overlay: OverlayController
     let hotkeys: HotkeyManager
+    let launcher: LauncherController
 
     /// Tracked by SettingsRootView via window notifications.
     var isSettingsWindowVisible = false {
@@ -54,52 +55,40 @@ final class AppModel {
     /// reopen, debug driver) can open the settings scene.
     var openSettingsWindowAction: (() -> Void)?
 
+    /// Opens settings the standard way for a menu bar app: show the Dock
+    /// icon (per the Dock setting) before the window appears, bring the app
+    /// forward, then open or focus the window. Runs after the current event,
+    /// so a menu that triggered it has closed first.
     func openSettings() {
-        if !showSettingsWindow() {
-            if let openSettingsWindowAction {
-                openSettingsWindowAction()
-            } else {
-                // Early in launch the menu bar label's .task may not have
-                // captured the openWindow action yet (Dock reopen and debug
-                // commands can arrive first). Wait for it instead of dropping
-                // the request.
-                Task { @MainActor in
-                    for _ in 0..<60 {
-                        try? await Task.sleep(for: .milliseconds(50))
-                        if self.showSettingsWindow() { return }
-                        if let action = self.openSettingsWindowAction {
-                            action()
-                            break
-                        }
-                    }
-                    self.focusSettingsSoon()
-                }
-                return
-            }
+        DispatchQueue.main.async {
+            self.openSettingsNow(attemptsLeft: 20)
         }
-        focusSettingsSoon()
     }
 
-    /// Window creation is asynchronous; retry focusing until it exists. The
-    /// budget is generous (≈3s) because the very first settings open on a cold
-    /// launch can take well over half a second to materialize the scene, and
-    /// giving up early leaves the window open but unfocused.
-    func focusSettingsSoon() {
-        Task { @MainActor in
-            for _ in 0..<60 {
-                if self.showSettingsWindow() { return }
-                try? await Task.sleep(for: .milliseconds(50))
+    private func openSettingsNow(attemptsLeft: Int) {
+        isSettingsWindowVisible = true
+        NSApp.activate()
+        if showSettingsWindow() { return }
+        if let openSettingsWindowAction {
+            openSettingsWindowAction()
+        } else if attemptsLeft > 0 {
+            // Very early in launch (a Dock click, a test command) the menu
+            // bar hasn't handed over the open-window action yet.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.openSettingsNow(attemptsLeft: attemptsLeft - 1)
             }
         }
     }
 
+    /// Focuses the settings window if it exists (closed windows are kept).
     @discardableResult
     func showSettingsWindow() -> Bool {
         guard let window = NSApp.windows.first(where: {
             $0.identifier?.rawValue.contains(WindowID.settings) == true
         }) else { return false }
-        // makeKeyAndOrderFront does not restore a minimized window, so a Dock
-        // click or menu "Settings…" would otherwise leave it stuck in the Dock.
+        // Open on the Space the user is on, not the one it was last shown on.
+        window.collectionBehavior.insert(.moveToActiveSpace)
+        // makeKeyAndOrderFront doesn't restore a minimized window.
         if window.isMiniaturized {
             window.deminiaturize(nil)
         }
@@ -109,7 +98,6 @@ final class AppModel {
         }
         #endif
         window.makeKeyAndOrderFront(nil)
-        NSApp.activate()
         return true
     }
 
@@ -129,13 +117,20 @@ final class AppModel {
     private init() {
         let store = CheatsheetStore()
         let overlay = OverlayController(store: store)
-        let hotkeys = HotkeyManager(store: store, overlay: overlay)
+        let launcher = LauncherController(store: store, overlay: overlay)
+        let hotkeys = HotkeyManager(store: store, overlay: overlay, launcher: launcher)
         self.store = store
         self.overlay = overlay
         self.hotkeys = hotkeys
-        store.onChange = { [weak hotkeys, weak overlay] in
+        self.launcher = launcher
+        launcher.openSettings = { [weak self] in self?.openSettings() }
+        store.onChange = { [weak hotkeys, weak overlay, weak launcher, weak store] in
             hotkeys?.sync()
             overlay?.refreshFromStore()
+            if let store {
+                RecentSheets.prune(keeping: store.sheets)
+            }
+            launcher?.refresh()
         }
         overlay.onSessionsChanged = { [weak hotkeys] in
             hotkeys?.updatePinShortcutAvailability()
@@ -267,6 +262,28 @@ final class AppModel {
                 try? Data("Different contents from Cheatsheet's copy.\n".utf8).write(to: original)
                 Task { await store.linkOriginal(original, toFile: file, in: sheet.id) }
             }
+        } else if action == "toggleLauncher" {
+            // What the search-bar shortcut does (Carbon hotkeys can't be
+            // synthesized from XCUITest).
+            launcher.toggle()
+        } else if action.hasPrefix("deleteSheet:"), UITestMode.isActive {
+            // "deleteSheet:<sheet name>" — as the settings Delete button does.
+            let name = String(action.dropFirst("deleteSheet:".count))
+            if let sheet = store.sheets.first(where: { $0.name == name }) {
+                store.delete(sheet)
+            }
+        } else if action.hasPrefix("addWebPage:"), UITestMode.isActive {
+            // "addWebPage:<address>" — a new sheet, as the settings form does.
+            let address = String(action.dropFirst("addWebPage:".count))
+            if let url = WebLocation.normalizedURL(from: address) {
+                store.addSheet(webPages: [WebLocation.Entry(url: url, name: WebLocation.defaultName(for: url))])
+            }
+        } else if action.hasPrefix("webClick:"), UITestMode.isActive {
+            // "webClick:<css selector>" — clicks it in the web page on screen.
+            LiveWebPages.clickOnScreen(selector: String(action.dropFirst("webClick:".count)))
+        } else if action.hasPrefix("launcherQuery:") {
+            // As typing into the search bar does.
+            launcher.setQuery(String(action.dropFirst("launcherQuery:".count)))
         } else if action.hasPrefix("state:") {
             postDebugState(nonce: String(action.dropFirst(6)))
         }
@@ -309,6 +326,10 @@ final class AppModel {
             "settingsMiniaturized": settingsWindows.contains { $0.isMiniaturized },
             "settingsIsKey": settingsWindows.contains { $0.isKeyWindow },
             "dismissWithEsc": AppDefaults.store.object(forKey: "dismissWithEsc") as? Bool ?? true,
+            "sheetOpenMethod": SheetOpenMethod.current.rawValue,
+            "launcherVisible": launcher.isVisible,
+            "launcherResults": launcher.results.map(\.title),
+            "launcherSelectedIndex": launcher.selectedIndex,
             "dockIconPolicy": Self.dockIconPolicy.rawValue,
             // Diagnoses "openSettings did nothing": the action is captured by
             // the menu bar label's .task, which may not have run yet.
@@ -317,6 +338,8 @@ final class AppModel {
             "cursor": Self.currentCursorName(),
             // Pre-rendered markdown/HTML start pages not currently on screen.
             "warmWebViews": WarmWebViews.cachedCount,
+            "liveWebPages": LiveWebPages.debugSummary,
+            "webBrowserOpens": LiveWebPages.debugBrowserOpens,
             "warmWebViewsReady": WarmWebViews.readyCount,
             "webRevealMs": WebRevealTiming.lastDelayMs ?? -1,
         ]

@@ -7,11 +7,14 @@ nonisolated enum MediaKind: Equatable {
     case markdown
     case html
     case text
+    /// A `.webloc` pointing at a web page, shown live.
+    case webpage
     case unsupported
 
     static func of(_ url: URL) -> MediaKind {
         let ext = url.pathExtension.lowercased()
         if ext == "md" || ext == "markdown" { return .markdown }
+        if ext == WebLocation.fileExtension { return .webpage }
         guard let type = UTType(filenameExtension: ext) else { return .unsupported }
         if type.conforms(to: .html) { return .html }
         if type.conforms(to: .pdf) { return .pdf }
@@ -27,6 +30,7 @@ nonisolated enum MediaKind: Equatable {
         case .markdown: "doc.text"
         case .html: "globe"
         case .text: "doc.plaintext"
+        case .webpage: "safari"
         case .unsupported: "questionmark.square.dashed"
         }
     }
@@ -39,6 +43,7 @@ nonisolated enum MediaKind: Equatable {
         case .markdown: "a markdown file"
         case .html: "an HTML page"
         case .text: "a text file"
+        case .webpage: "a web page"
         case .unsupported: "an unsupported file"
         }
     }
@@ -47,5 +52,11 @@ nonisolated enum MediaKind: Equatable {
     /// their source text.
     var hasRawView: Bool {
         self == .markdown || self == .html
+    }
+
+    /// Overlay search reads the app's copy of a page; a web page's content
+    /// lives on the server, so it isn't searched.
+    var isSearchable: Bool {
+        self != .unsupported && self != .webpage
     }
 }

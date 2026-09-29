@@ -10,15 +10,20 @@ struct GeneralSettingsView: View {
     /// Turned on here, but macOS wants it approved in System Settings.
     @State private var loginItemAwaitsApproval = false
     @AppStorage("dismissWithEsc", store: AppDefaults.store) private var dismissWithEsc = true
+    @AppStorage(OverlayController.dismissOnClickOutsideKey, store: AppDefaults.store) private var dismissOnClickOutside = false
     @AppStorage("dockIconPolicy", store: AppDefaults.store) private var dockIconPolicy = DockIconPolicy.whenSettingsOpen.rawValue
     @State private var pinShortcutWarning: String?
+    @AppStorage(SheetOpenMethod.defaultsKey, store: AppDefaults.store) private var openMethod = SheetOpenMethod.shortcuts
+    @State private var searchShortcutWarning: String?
+    @AppStorage(LauncherEmptyState.defaultsKey, store: AppDefaults.store) private var launcherEmptyState = LauncherEmptyState.nothing
+    @State private var previousSearchShortcut = KeyboardShortcuts.getShortcut(for: .openSearch)
     @Environment(CheatsheetStore.self) private var store
     @AppStorage(OverlayButtonsMode.defaultsKey, store: AppDefaults.store) private var overlayButtonsMode = OverlayButtonsMode.expanded
 
     var body: some View {
         Form {
-            Section {
-                Toggle("Launch at login", isOn: $launchAtLogin)
+            Section("App") {
+                Toggle("Open at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in
                         setLaunchAtLogin(enabled)
                     }
@@ -41,15 +46,7 @@ struct GeneralSettingsView: View {
                         .accessibilityIdentifier("general.openLoginItems")
                     }
                 }
-            }
-            // Coming back from System Settings: pick up an approval made there.
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                refreshLoginItemStatus()
-            }
-            Section {
-                Toggle("Dismiss overlay with Escape", isOn: $dismissWithEsc)
-                    .accessibilityIdentifier("general.dismissWithEsc")
-                Picker("Dock Icon", selection: $dockIconPolicy) {
+                Picker("Show in Dock", selection: $dockIconPolicy) {
                     ForEach(DockIconPolicy.allCases) { policy in
                         Text(policy.label).tag(policy.rawValue)
                     }
@@ -59,33 +56,59 @@ struct GeneralSettingsView: View {
                     AppModel.shared.applyDockIconPolicy()
                 }
             }
-            Section {
-                Toggle("Keep cheatsheets in sync with original files", isOn: Binding(
-                    get: { store.syncsWithOriginals },
-                    set: { isOn in Task { await store.setSyncsWithOriginals(isOn) } }
-                ))
-                .accessibilityIdentifier("general.syncWithOriginals")
-                Text("Cheatsheet always keeps its own copy of each file. When this is on, copies update from your originals, and edits made in an overlay are saved to the original. If Cheatsheet's copy has changes the original doesn't, you're asked before either file is overwritten.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            // Coming back from System Settings: pick up an approval made there.
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                refreshLoginItemStatus()
             }
-            Section {
-                Picker("Overlay buttons", selection: $overlayButtonsMode) {
-                    ForEach(OverlayButtonsMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
+
+            Section("Opening Cheatsheets") {
+                Picker("Open cheatsheets with", selection: $openMethod) {
+                    ForEach(SheetOpenMethod.allCases) { method in
+                        Text(method.label).tag(method)
                     }
                 }
-                .accessibilityIdentifier("general.overlayButtonsMode")
-                Text("Collapsed modes show a single ☰ button in the overlay instead of every control.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .accessibilityIdentifier("general.openMethod")
+                .onChange(of: openMethod) { _, _ in
+                    AppModel.shared.hotkeys.updateOpenMethodAvailability()
+                }
+                if openMethod == .search {
+                    Text("Each cheatsheet's keyboard shortcut is kept, but turned off.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if openMethod.usesSearch {
+                    LabeledContent("Search bar shortcut") {
+                        KeyboardShortcuts.Recorder("", name: .openSearch, onChange: handleSearchShortcutChange)
+                    }
+                    .accessibilityIdentifier("general.searchShortcut")
+                    if let searchShortcutWarning {
+                        Text(searchShortcutWarning)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .accessibilityIdentifier("general.searchShortcutWarning")
+                    }
+                    Picker("Search bar suggestions", selection: $launcherEmptyState) {
+                        ForEach(LauncherEmptyState.allCases) { state in
+                            Text(state.label).tag(state)
+                        }
+                    }
+                    .accessibilityIdentifier("general.launcherEmptyState")
+                    Text("Listed in the search bar before you type.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-            Section {
-                LabeledContent("Pin/unpin current cheatsheet") {
+
+            Section("Closing Cheatsheets") {
+                Toggle("Close cheatsheets with Escape", isOn: $dismissWithEsc)
+                    .accessibilityIdentifier("general.dismissWithEsc")
+                Toggle("Close cheatsheets when clicking outside them", isOn: $dismissOnClickOutside)
+                    .accessibilityIdentifier("general.dismissOnClickOutside")
+                LabeledContent("Pin or unpin shortcut") {
                     KeyboardShortcuts.Recorder("", name: .togglePin) { shortcut in
                         pinShortcutWarning = SystemShortcuts.conflictWarning(for: shortcut)
                         // Recording re-registers the shortcut unconditionally;
-                        // re-apply the only-while-overlay-open gate.
+                        // re-apply the only-while-a-cheatsheet-is-open gate.
                         AppModel.shared.hotkeys.updatePinShortcutAvailability()
                     }
                 }
@@ -95,6 +118,32 @@ struct GeneralSettingsView: View {
                         .foregroundStyle(.orange)
                         .accessibilityIdentifier("general.systemShortcutWarning")
                 }
+                Text("A pinned cheatsheet stays open until you unpin it. The shortcut works while a cheatsheet is open.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Cheatsheet Buttons") {
+                Picker("Buttons in open cheatsheets", selection: $overlayButtonsMode) {
+                    ForEach(OverlayButtonsMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .accessibilityIdentifier("general.overlayButtonsMode")
+                Text("Collapsing groups the buttons behind a single ☰ button in the cheatsheet's corner.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Original Files") {
+                Toggle("Sync with original files", isOn: Binding(
+                    get: { store.syncsWithOriginals },
+                    set: { isOn in Task { await store.setSyncsWithOriginals(isOn) } }
+                ))
+                .accessibilityIdentifier("general.syncWithOriginals")
+                Text("Files you add are copied into the cheatsheet. With sync on, each copy updates when its original changes, and edits made in a cheatsheet are saved to the original. If both have changed, you're asked which to keep before anything is overwritten.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -102,7 +151,25 @@ struct GeneralSettingsView: View {
             pinShortcutWarning = SystemShortcuts.conflictWarning(
                 for: KeyboardShortcuts.getShortcut(for: .togglePin)
             )
+            searchShortcutWarning = SystemShortcuts.conflictWarning(
+                for: KeyboardShortcuts.getShortcut(for: .openSearch)
+            )
         }
+    }
+
+    /// Mirrors the per-sheet recorder: a combination another cheatsheet uses
+    /// (while its shortcuts are on) is refused and the previous one kept.
+    private func handleSearchShortcutChange(_ shortcut: KeyboardShortcuts.Shortcut?) {
+        if let shortcut, openMethod.usesSheetShortcuts,
+           let other = store.conflictingSheet(with: shortcut, excluding: UUID()) {
+            KeyboardShortcuts.setShortcut(previousSearchShortcut, for: .openSearch)
+            searchShortcutWarning = "\(shortcut) is already used by “\(other.name)”. Kept the previous shortcut."
+        } else {
+            previousSearchShortcut = shortcut
+            searchShortcutWarning = SystemShortcuts.conflictWarning(for: shortcut)
+        }
+        // Recording re-registers shortcuts unconditionally; re-apply.
+        AppModel.shared.hotkeys.updateOpenMethodAvailability()
     }
 
     private static var isLoginItemEnabled: Bool {

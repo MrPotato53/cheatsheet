@@ -86,6 +86,9 @@ final class OverlayController {
     /// Fired whenever a session opens or closes; the hotkey manager uses it
     /// to register the pin shortcut only while an overlay is on screen.
     var onSessionsChanged: (() -> Void)?
+    /// Global mouse monitor for "close when clicking outside" (see
+    /// OverlayController+ClickOutside); installed only while needed.
+    @ObservationIgnored var clickOutsideMonitor: Any?
 
     // Pre-built pages and pre-decoded start-page images for sheets with
     // "keep start page loaded" — their opens skip the loading state entirely.
@@ -152,6 +155,19 @@ final class OverlayController {
         }
     }
 
+    /// The requested page if it's among the shown pages, else the start page.
+    private func openingIndex(for sheet: Cheatsheet, pages: [SheetPage], at page: SheetPage?) -> Int {
+        if let page, let index = Self.index(of: page, in: pages) {
+            return index
+        }
+        return startIndex(for: sheet, pageCount: pages.count)
+    }
+
+    /// Same file and PDF page; transforms and raw mode may differ.
+    private static func index(of page: SheetPage, in pages: [SheetPage]) -> Int? {
+        pages.firstIndex { $0.url == page.url && $0.pdfPageIndex == page.pdfPageIndex }
+    }
+
     private var transientSession: OverlaySession? {
         sessions.first { !$0.isPinned }
     }
@@ -174,10 +190,17 @@ final class OverlayController {
         }
     }
 
-    func show(_ sheet: Cheatsheet) {
+    /// Opens `sheet`, on `page` when given (settings' page preview) and
+    /// otherwise on its start page.
+    func show(_ sheet: Cheatsheet, at page: SheetPage? = nil) {
+        // Every way of opening a sheet (search bar, shortcut, menu) ends here.
+        RecentSheets.record(sheet.id)
         // Repeated key-downs while holding the hotkey land here too.
         if let existing = session(for: sheet.id) {
             bringToFront(existing)
+            if let page, let index = Self.index(of: page, in: existing.pages) {
+                goToPage(index, in: existing)
+            }
             return
         }
         if let transient = transientSession {
@@ -222,6 +245,7 @@ final class OverlayController {
 
         sessions.append(session)
         onSessionsChanged?()
+        updateClickOutsideMonitor()
         updateFrame(for: session, animated: false)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
@@ -240,7 +264,7 @@ final class OverlayController {
         if sheet.keepsStartPageLoaded, let warm = warmedStartPages[sheet.id], warm.inputs.hasSamePages(as: warmInputs(for: sheet)) {
             // Warm path: pages and the start page's decoded image are ready.
             session.pages = warm.pages
-            session.pageIndex = startIndex(for: sheet, pageCount: warm.pages.count)
+            session.pageIndex = openingIndex(for: sheet, pages: warm.pages, at: page)
             session.isLoadingPages = false
             updateFrame(for: session, animated: false)
             return
@@ -259,7 +283,7 @@ final class OverlayController {
                 self.sessions.contains(where: { $0 === session })
             else { return }
             session.pages = pages
-            session.pageIndex = self.startIndex(for: sheet, pageCount: pages.count)
+            session.pageIndex = self.openingIndex(for: sheet, pages: pages, at: page)
             session.isLoadingPages = false
             self.updateFrame(for: session, animated: true)
         }
@@ -359,6 +383,7 @@ final class OverlayController {
         lastPageIndex[session.sheet.id] = session.pageIndex
         sessions.removeAll { $0 === session }
         onSessionsChanged?()
+        updateClickOutsideMonitor()
         // Re-warm "last viewed" start pages to the page just left.
         warmStartPages()
         session.moveCommitTask?.cancel()
@@ -399,6 +424,7 @@ final class OverlayController {
         } else {
             session.isPinned = true
         }
+        updateClickOutsideMonitor()
     }
 
     /// Flips the current page's file between rendered and source view. Stored
@@ -782,6 +808,13 @@ final class OverlayController {
         }
         if let handled = handleSearchKeyEvent(event, in: session) {
             return handled
+        }
+        // A clicked-into web page gets its arrow keys (text fields, sliders,
+        // scrolling); the page buttons still switch pages.
+        let isArrow = event.keyCode == 123 || event.keyCode == 124
+        if isArrow, session.panel.isWebViewFocused,
+           let page = session.currentPage, MediaKind.of(page.url) == .webpage {
+            return false
         }
         switch event.keyCode {
         case 123: // left arrow

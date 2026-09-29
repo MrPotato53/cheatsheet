@@ -9,7 +9,7 @@ nonisolated enum ActivationMode: String, Codable, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .toggle: "Toggle"
+        case .toggle: "Press to open or close"
         case .hold: "Hold to show"
         }
     }

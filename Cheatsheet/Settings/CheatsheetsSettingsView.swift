@@ -15,6 +15,24 @@ struct CheatsheetsSettingsView: View {
     @State private var selection: Cheatsheet.ID?
     @State private var isImporterPresented = false
     @State private var importTarget: ImportTarget = .newSheet
+    @State private var presentedForm: PresentedForm?
+    /// Files was chosen in New Cheatsheet: the file picker opens once that
+    /// pop-up has finished closing (two can't be up at once).
+    @State private var opensFilePickerOnDismiss = false
+
+    private enum PresentedForm: Identifiable {
+        case newCheatsheet
+        case addWebPage(Cheatsheet.ID)
+
+        var id: String {
+            switch self {
+            case .newCheatsheet: "new"
+            case .addWebPage(let sheetID): "web-\(sheetID)"
+            }
+        }
+    }
+
+    static let deletionMessage = "Its copies of your files are deleted with it. Your original files aren't affected."
     @State private var isDeleteConfirmationPresented = false
     @State private var pendingDeletion: Cheatsheet?
     @State private var isTransferring = false
@@ -27,7 +45,7 @@ struct CheatsheetsSettingsView: View {
     }
 
     static let importableTypes: [UTType] = {
-        var types: [UTType] = [.pdf, .image, .plainText, .text, .sourceCode]
+        var types: [UTType] = [.pdf, .image, .plainText, .text, .sourceCode, .internetLocation]
         if let markdown = UTType(filenameExtension: "md") {
             types.append(markdown)
         }
@@ -64,6 +82,17 @@ struct CheatsheetsSettingsView: View {
                 }
             }
         }
+        .sheet(item: $presentedForm, onDismiss: openFilePickerIfChosen) { form in
+            switch form {
+            case .newCheatsheet:
+                NewCheatsheetForm(
+                    onChooseFiles: { opensFilePickerOnDismiss = true },
+                    onAddWebPage: { addWebPage($0, to: .newSheet) }
+                )
+            case .addWebPage(let sheetID):
+                AddWebPageForm(title: "Add Web Page") { addWebPage($0, to: .existingSheet(sheetID)) }
+            }
+        }
         .confirmationDialog(
             "Delete cheatsheet?",
             isPresented: $isDeleteConfirmationPresented,
@@ -77,7 +106,7 @@ struct CheatsheetsSettingsView: View {
                 store.delete(sheet)
             }
         } message: { sheet in
-            Text("“\(sheet.name)” and its imported files will be removed.")
+            Text(Self.deletionMessage)
         }
         .alert(item: $transferAlert) { alert in
             Alert(title: Text(alert.title), message: Text(alert.message))
@@ -109,20 +138,20 @@ struct CheatsheetsSettingsView: View {
                     ContentUnavailableView {
                         Label("No cheatsheets", systemImage: "rectangle.stack")
                     } description: {
-                        Text("Add one with + or drop files here.")
+                        Text("Create one with +, or drop files or links here.")
                     }
                 }
             }
             Divider()
             HStack(spacing: 4) {
                 Button {
-                    importTarget = .newSheet
-                    isImporterPresented = true
+                    presentedForm = .newCheatsheet
                 } label: {
                     Image(systemName: "plus")
                         .frame(width: 20, height: 20)
                 }
                 .accessibilityIdentifier("sheets.add")
+                .help("New cheatsheet")
                 Button {
                     pendingDeletion = selectedSheet
                     isDeleteConfirmationPresented = true
@@ -143,18 +172,18 @@ struct CheatsheetsSettingsView: View {
             .padding(6)
         }
         .dropDestination(for: URL.self) { urls, _ in
-            guard !urls.isEmpty else { return false }
-            // Dropped exports are imported, not added as unreadable pages.
-            let archives = urls.filter(LibraryTransferPanels.isArchive)
-            if !archives.isEmpty {
-                importArchives(archives)
-                return true
+            let dropped = DroppedItems(urls)
+            guard !dropped.isEmpty else { return false }
+            // Exports are imported as the cheatsheets they contain.
+            if !dropped.archives.isEmpty {
+                importArchives(dropped.archives)
             }
-            if let sheet = HTMLResourceAccess.withResourceAccess(for: urls, { store.addSheet(files: urls) }) {
+            // Anything else becomes one new cheatsheet: files as pages, links
+            // (e.g. from a browser's address bar) as web pages.
+            if let sheet = addSheet(files: dropped.files, webPages: dropped.webPages) {
                 selection = sheet.id
-                return true
             }
-            return false
+            return true
         }
     }
 
@@ -166,6 +195,9 @@ struct CheatsheetsSettingsView: View {
                     requestAddFiles: {
                         importTarget = .existingSheet(selectedSheet.id)
                         isImporterPresented = true
+                    },
+                    requestAddWebPage: {
+                        presentedForm = .addWebPage(selectedSheet.id)
                     },
                     requestExport: {
                         export([selectedSheet.id], suggestedName: selectedSheet.name)
@@ -181,8 +213,7 @@ struct CheatsheetsSettingsView: View {
                         .font(.title3)
                         .foregroundStyle(.secondary)
                     Button {
-                        importTarget = .newSheet
-                        isImporterPresented = true
+                        presentedForm = .newCheatsheet
                     } label: {
                         Label("Create Cheatsheet", systemImage: "plus")
                             .font(.title3)
@@ -193,6 +224,37 @@ struct CheatsheetsSettingsView: View {
                     .controlSize(.large)
                 }
             }
+        }
+    }
+
+    private func addSheet(files: [URL], webPages: [WebLocation.Entry]) -> Cheatsheet? {
+        guard !files.isEmpty else {
+            return webPages.isEmpty ? nil : store.addSheet(webPages: webPages)
+        }
+        let sheet = HTMLResourceAccess.withResourceAccess(for: files) { store.addSheet(files: files) }
+        if let sheet, !webPages.isEmpty {
+            store.addWebPages(webPages, to: sheet.id)
+        }
+        return sheet
+    }
+
+    // MARK: - Web pages
+
+    private func openFilePickerIfChosen() {
+        guard opensFilePickerOnDismiss else { return }
+        opensFilePickerOnDismiss = false
+        importTarget = .newSheet
+        isImporterPresented = true
+    }
+
+    private func addWebPage(_ entry: WebLocation.Entry, to target: ImportTarget) {
+        switch target {
+        case .newSheet:
+            if let sheet = store.addSheet(webPages: [entry]) {
+                selection = sheet.id
+            }
+        case .existingSheet(let sheetID):
+            store.addWebPages([entry], to: sheetID)
         }
     }
 

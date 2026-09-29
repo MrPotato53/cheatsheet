@@ -122,7 +122,7 @@ extension CheatsheetStore {
                 return CGSize(width: height, height: width)
             }
             return CGSize(width: width, height: height)
-        case .markdown, .html, .text, .unsupported:
+        case .markdown, .html, .text, .webpage, .unsupported:
             return nil
         }
     }

@@ -20,7 +20,7 @@ extension OverlayController {
     static func isEditable(_ page: SheetPage) -> Bool {
         switch MediaKind.of(page.url) {
         case .text, .markdown, .html: FileManager.default.fileExists(atPath: page.url.path)
-        case .pdf, .image, .unsupported: false
+        case .pdf, .image, .webpage, .unsupported: false
         }
     }
 

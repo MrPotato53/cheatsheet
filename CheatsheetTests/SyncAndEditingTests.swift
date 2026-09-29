@@ -242,13 +242,69 @@ struct OriginalSyncTests {
         try "- [ ] milk".write(to: same, atomically: true, encoding: .utf8)
         try "something else".write(to: different, atomically: true, encoding: .utf8)
 
-        #expect(await fixture.store.linkOriginal(same, toFile: "todo.md", in: fixture.sheetID) == .linked)
-        #expect(fixture.state == .linked)
+        // The copy takes each original's name as it's linked.
+        #expect(await fixture.store.linkOriginal(same, toFile: "todo.md", in: fixture.sheetID) == .linked(as: "same.md"))
+        #expect(fixture.store.syncState(of: "same.md", in: fixture.sheet) == .linked)
 
-        #expect(await fixture.store.linkOriginal(different, toFile: "todo.md", in: fixture.sheetID) == .needsReview)
-        #expect(fixture.state == .needsReview(originalChanged: true))
+        fixture.store.unlinkOriginal(ofFile: "same.md", in: fixture.sheetID)
+        #expect(await fixture.store.linkOriginal(different, toFile: "same.md", in: fixture.sheetID) == .needsReview(as: "different.md"))
+        #expect(fixture.store.syncState(of: "different.md", in: fixture.sheet) == .needsReview(originalChanged: true))
         #expect(read(different) == "something else")
-        #expect(read(fixture.copy) == "- [ ] milk")
+        #expect(read(fixture.store.fileURL(for: fixture.sheet, file: "different.md")) == "- [ ] milk")
+    }
+
+    // Linking never renames the copy onto another file of the sheet.
+    @Test func linkingKeepsTheNameWhenTheOriginalsNameIsTaken() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.tearDown() }
+        let other = fixture.originals.appendingPathComponent("notes.md")
+        try "- [ ] milk".write(to: other, atomically: true, encoding: .utf8)
+        fixture.store.addFiles([other], to: fixture.sheetID, linksOriginals: false)
+        fixture.store.unlinkOriginal(ofFile: "todo.md", in: fixture.sheetID)
+
+        #expect(await fixture.store.linkOriginal(other, toFile: "todo.md", in: fixture.sheetID) == .linked(as: "todo.md"))
+        #expect(fixture.sheet.files == ["todo.md", "notes.md"])
+    }
+
+    // Renaming moves the copy and every reference to it; the original stays.
+    @Test func renamingMovesTheCopyAndItsReferences() throws {
+        let fixture = try makeFixture()
+        defer { fixture.tearDown() }
+        fixture.store.setShowsRaw(true, forFile: "todo.md", in: fixture.sheetID)
+        fixture.store.setPageOrder([PageRef(file: "todo.md")], for: fixture.sheetID)
+
+        #expect(fixture.store.renameFile("todo.md", to: "Groceries.md", in: fixture.sheetID) == nil)
+
+        let sheet = fixture.sheet
+        #expect(sheet.files == ["Groceries.md"])
+        #expect(sheet.pageOrder.map(\.file) == ["Groceries.md"])
+        #expect(sheet.rawFiles == ["Groceries.md"])
+        #expect(sheet.links["Groceries.md"] != nil && sheet.links["todo.md"] == nil)
+        #expect(read(fixture.store.fileURL(for: sheet, file: "Groceries.md")) == "- [ ] milk")
+        #expect(FileManager.default.fileExists(atPath: fixture.original.path), "the original is never renamed")
+        #expect(fixture.store.syncState(of: "Groceries.md", in: sheet) == .linked)
+    }
+
+    @Test func renamingOnlyTheCaseWorks() throws {
+        let fixture = try makeFixture()
+        defer { fixture.tearDown() }
+        #expect(fixture.store.renameFile("todo.md", to: "TODO.md", in: fixture.sheetID) == nil)
+        #expect(fixture.sheet.files == ["TODO.md"])
+        #expect(read(fixture.store.fileURL(for: fixture.sheet, file: "TODO.md")) == "- [ ] milk")
+    }
+
+    @Test func renamingRejectsUnusableNames() throws {
+        let fixture = try makeFixture()
+        defer { fixture.tearDown() }
+        let other = fixture.originals.appendingPathComponent("notes.md")
+        try "x".write(to: other, atomically: true, encoding: .utf8)
+        fixture.store.addFiles([other], to: fixture.sheetID, linksOriginals: false)
+
+        #expect(fixture.store.renameFile("todo.md", to: "Notes.md", in: fixture.sheetID) == .taken)
+        #expect(fixture.store.renameFile("todo.md", to: " .md", in: fixture.sheetID) == .empty)
+        #expect(fixture.store.renameFile("todo.md", to: "a/b.md", in: fixture.sheetID) == .invalidCharacters)
+        #expect(fixture.store.renameFile("todo.md", to: "todo.pdf", in: fixture.sheetID) == .differentKind)
+        #expect(fixture.sheet.files == ["todo.md", "notes.md"])
     }
 
     // Linking a PDF as the original of a markdown page would leave "Use

@@ -15,9 +15,9 @@ nonisolated enum OverlayButtonsMode: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .expanded: "Always expanded"
-        case .expandOnClick: "Expand on click"
-        case .expandOnHover: "Expand on hover"
+        case .expanded: "Show all"
+        case .expandOnClick: "Collapse, expand on click"
+        case .expandOnHover: "Collapse, expand on hover"
         }
     }
 
@@ -44,9 +44,6 @@ struct OverlayToolbar: View {
             if session.search.isActive {
                 searchBar
             }
-            if session.editor != nil {
-                doneButton
-            }
             if collapses {
                 if isExpanded {
                     actionButtons
@@ -60,6 +57,11 @@ struct OverlayToolbar: View {
                 }
             } else {
                 actionButtons
+            }
+            // Last, so it sits in the corner: expanding the other controls
+            // grows leftward and never moves it out from under the cursor.
+            if session.editor != nil {
+                doneButton
             }
         }
         .padding(8)
@@ -80,7 +82,7 @@ struct OverlayToolbar: View {
     }
 
     private var hasSearchablePages: Bool {
-        session.pages.contains { MediaKind.of($0.url) != .unsupported }
+        session.pages.contains { MediaKind.of($0.url).isSearchable }
     }
 
     /// Faded until the overlay is hovered, except where noted; always shown
@@ -130,7 +132,7 @@ struct OverlayToolbar: View {
         .circleChrome()
         .opacity(session.isPinned || isOverlayHovered || isExpanded ? 1 : 0)
         .animation(.easeInOut(duration: 0.15), value: isOverlayHovered)
-        .help(mode == .expandOnClick ? (isExpanded ? "Hide controls" : "Show controls") : "Overlay controls")
+        .help(mode == .expandOnClick ? (isExpanded ? "Hide controls" : "Show controls") : "Cheatsheet buttons")
     }
 
     private var searchButton: some View {
@@ -207,7 +209,7 @@ struct OverlayToolbar: View {
         .circleChrome()
         .opacity(revealed(always: session.isPinned))
         .animation(.easeInOut(duration: 0.15), value: isOverlayHovered)
-        .help(session.isPinned ? "Unpin — overlay dismisses normally again" : "Pin — overlay stays open until unpinned")
+        .help(session.isPinned ? "Unpin: closes normally again" : "Pin: stays open until unpinned")
     }
 
     private var searchBar: some View {
@@ -275,13 +277,13 @@ struct SyncReviewBanner: View {
                 .foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 Button("Use Original") { onResolve(.useOriginal) }
-                    .help("Replace Cheatsheet's version with the original")
+                    .help("Replace the copy with the original")
                     .accessibilityIdentifier("overlay.review.useOriginal")
-                Button("Use Cheatsheet's") { onResolve(.useCheatsheetCopy) }
-                    .help("Overwrite the original with Cheatsheet's version")
+                Button("Use Copy") { onResolve(.useCheatsheetCopy) }
+                    .help("Overwrite the original with the copy")
                     .accessibilityIdentifier("overlay.review.useCopy")
                 Button("Keep Both") { onResolve(.keepBoth) }
-                    .help("Add Cheatsheet's version as a separate file, then follow the original")
+                    .help("Keep the copy as a separate file, then follow the original")
                     .accessibilityIdentifier("overlay.review.keepBoth")
             }
             .controlSize(.small)
@@ -298,7 +300,7 @@ struct SyncReviewBanner: View {
     private var title: String {
         originalChanged
             ? "“\(fileName)” changed here and in the original"
-            : "Cheatsheet's “\(fileName)” has changes the original doesn't"
+            : "The copy of “\(fileName)” has changes the original doesn't"
     }
 }
 
@@ -322,7 +324,7 @@ extension EditSaveOutcome {
     }
 }
 
-private extension View {
+extension View {
     /// Overlay buttons never take keyboard focus: keys are handled by the
     /// panel, and a focused button draws a ring when the overlay opens.
     func overlayControl() -> some View {

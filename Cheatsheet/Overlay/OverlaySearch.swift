@@ -110,7 +110,8 @@ extension OverlayController {
     func handleSearchKeyEvent(_ event: NSEvent, in session: OverlaySession) -> Bool? {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let key = event.charactersIgnoringModifiers?.lowercased()
-        if flags.contains(.command), key == "f" {
+        if flags.contains(.command), key == "f",
+           session.pages.contains(where: { MediaKind.of($0.url).isSearchable }) {
             openSearch(in: session)
             return true
         }

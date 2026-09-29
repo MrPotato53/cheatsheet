@@ -86,7 +86,7 @@ nonisolated enum PageSearch {
                 counts.append(searchableText(for: page).map { ranges(of: query, in: $0).count } ?? 0)
             case .image:
                 counts.append(await imageMatchRects(query: query, url: page.url).count)
-            case .unsupported:
+            case .webpage, .unsupported:
                 counts.append(0)
             }
         }
@@ -175,6 +175,8 @@ nonisolated enum PageSearch {
             return visibleText(ofHTML: MarkdownRenderer.render(source).body)
         case .html where !page.showsRaw:
             return visibleText(ofHTML: source)
+        case .webpage, .unsupported:
+            return nil
         default:
             return source
         }

@@ -159,10 +159,11 @@ extension CheatsheetStore {
     // MARK: - Linking
 
     enum LinkResult: Equatable {
-        /// Same contents: linked and in sync.
-        case linked
+        /// Same contents: linked and in sync. `as`: the file's name now
+        /// (it takes the original's name when that's free).
+        case linked(as: String)
         /// Contents differ: the user picks which version to keep.
-        case needsReview
+        case needsReview(as: String)
         /// A different kind of file (a PDF for a markdown page): refused,
         /// since either choice would leave a page that can't display.
         case differentKind(expected: MediaKind, chosen: MediaKind)
@@ -183,11 +184,12 @@ extension CheatsheetStore {
         sheet.links[file] = link
         syncStates[sheetID]?[file] = nil
         update(sheet)
+        let name = adoptOriginalName(original, forFile: file, in: sheetID)
         await checkLinks(for: sheetID)
         guard let current = sheets.first(where: { $0.id == sheetID }) else { return .failed }
-        switch syncState(of: file, in: current) {
-        case .linked: return .linked
-        case .needsReview: return .needsReview
+        switch syncState(of: name, in: current) {
+        case .linked: return .linked(as: name)
+        case .needsReview: return .needsReview(as: name)
         case .copyOnly, .originalMissing: return .failed
         }
     }

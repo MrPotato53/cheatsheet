@@ -283,4 +283,18 @@ struct LibraryArchiveTests {
         #expect(!LibraryArchive.isSafeFileName("a/b"))
         #expect(!LibraryArchive.isSafeFileName(""))
     }
+
+    // Dropping on the cheatsheet list: exports import, files and links
+    // make a new cheatsheet, even when dropped together.
+    @Test func droppedItemsSortExportsFilesAndLinks() {
+        let export = URL(filePath: "/tmp/Backup.CHEATSHEETS")
+        let image = URL(filePath: "/tmp/keys.png")
+        let link = URL(string: "https://www.example.com/docs")!
+        let dropped = DroppedItems([export, image, link, URL(string: "mailto:a@b.c")!])
+        #expect(dropped.archives == [export])
+        #expect(dropped.files == [image])
+        #expect(dropped.webPages == [WebLocation.Entry(url: link, name: "example.com")])
+        #expect(DroppedItems([export]).files.isEmpty)
+        #expect(DroppedItems([URL(string: "mailto:a@b.c")!]).isEmpty)
+    }
 }

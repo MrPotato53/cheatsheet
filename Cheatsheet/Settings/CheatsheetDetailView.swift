@@ -5,16 +5,20 @@ import SwiftUI
 struct CheatsheetDetailView: View {
     @Binding var sheet: Cheatsheet
     let requestAddFiles: () -> Void
+    let requestAddWebPage: () -> Void
     let requestExport: () -> Void
     @Environment(CheatsheetStore.self) private var store
     @Environment(OverlayController.self) private var overlay
     @State private var previousShortcut: KeyboardShortcuts.Shortcut?
     @State private var conflictMessage: String?
     @State private var systemConflictWarning: String?
-    @State private var isDisplayPopoverPresented = false
     @State private var isDeleteConfirmationPresented = false
     @State private var reviewingFile: ReviewTarget?
     @State private var linkProblem: String?
+    @State private var pagesRefreshToken = 0
+    /// Search-only mode grays out the shortcut and activation mode (the
+    /// shortcut is kept, just not registered).
+    @AppStorage(SheetOpenMethod.defaultsKey, store: AppDefaults.store) private var openMethod = SheetOpenMethod.shortcuts
 
     private struct ReviewTarget: Identifiable {
         let file: String
@@ -29,11 +33,11 @@ struct CheatsheetDetailView: View {
                     .accessibilityIdentifier("detail.name")
             }
 
-            // Page reordering lives solely in the preview gallery below;
-            // this section manages source documents.
-            Section("Documents") {
+            // Page reordering lives solely in the Pages gallery below; this
+            // section manages what the pages come from.
+            Section("Files and Web Pages") {
                 if sheet.files.isEmpty {
-                    Text("No files").foregroundStyle(.secondary)
+                    Text("No files or web pages").foregroundStyle(.secondary)
                 }
                 // AppKit-backed scrolling: a SwiftUI List nested in a Form
                 // never receives wheel/scroll-bar events on macOS.
@@ -50,16 +54,54 @@ struct CheatsheetDetailView: View {
                 // Fixed height sized to the row count: collapses to a single
                 // row and scrolls internally once the cap is hit.
                 .frame(height: min(max(CGFloat(sheet.files.count), 1) * 30, 150))
-                Button("Add Files…", action: requestAddFiles)
+                HStack {
+                    Button("Add Files…", action: requestAddFiles)
+                    Button("Add Web Page…", action: requestAddWebPage)
+                        .accessibilityIdentifier("detail.addWebPage")
+                }
             }
 
-            Section("Preview") {
-                SheetInlinePreview(sheet: sheet)
+            Section {
+                SheetInlinePreview(sheet: sheet, refreshToken: pagesRefreshToken)
+            } header: {
+                HStack {
+                    Text("Pages")
+                    Spacer()
+                    Button {
+                        Task {
+                            // Pull edited originals into their copies first.
+                            await store.checkLinks(for: sheet.id)
+                            pagesRefreshToken += 1
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Reload pages from their files")
+                    .accessibilityIdentifier("detail.refreshPages")
+                }
             }
 
-            Section("Shortcut") {
-                LabeledContent("Keyboard shortcut") {
+            Section("Keyboard Shortcut") {
+                LabeledContent("Shortcut") {
                     KeyboardShortcuts.Recorder("", name: sheet.shortcutName, onChange: handleShortcutChange)
+                }
+                .disabled(!openMethod.usesSheetShortcuts)
+                .accessibilityIdentifier("detail.shortcut")
+                Picker("Shortcut behavior", selection: $sheet.activation) {
+                    ForEach(ActivationMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                .disabled(!openMethod.usesSheetShortcuts)
+                .accessibilityIdentifier("detail.activation")
+                if !openMethod.usesSheetShortcuts {
+                    Text("Keyboard shortcuts are off: cheatsheets open from the search bar. To use them too, set General → Open cheatsheets with to “\(SheetOpenMethod.both.label)”.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("detail.shortcutInactive")
                 }
                 if let conflictMessage {
                     Text(conflictMessage)
@@ -74,15 +116,8 @@ struct CheatsheetDetailView: View {
                 }
             }
 
-            Section("Behavior") {
-                Picker("Activation Mode", selection: $sheet.activation) {
-                    ForEach(ActivationMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-                .accessibilityIdentifier("detail.activation")
-                Picker("Open Cheatsheet to", selection: startPageChoice) {
+            Section("When Opened") {
+                Picker("Start on", selection: startPageChoice) {
                     Text("First page").tag(StartPageChoice.first)
                     Text("Last viewed page").tag(StartPageChoice.lastViewed)
                     Text("Specific page").tag(StartPageChoice.fixed)
@@ -101,15 +136,15 @@ struct CheatsheetDetailView: View {
                     }
                     .accessibilityIdentifier("detail.fixedPage")
                 }
-                Toggle("Keep start page loaded", isOn: $sheet.keepsStartPageLoaded)
+                displayPicker
+                Toggle("Preload start page", isOn: $sheet.keepsStartPageLoaded)
                     .accessibilityIdentifier("detail.keepStartPageLoaded")
-                Text("Opens instantly by keeping the start page decoded in memory at all times. Increases idle memory usage by roughly the size of that page's media.")
+                Text("Opens instantly by keeping the start page ready in memory, which uses about as much memory as that page's content.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                displayPicker
             }
 
-            Section("Size & Position") {
+            Section("Size and Position") {
                 LabeledContent("Size") {
                     HStack(spacing: 10) {
                         Slider(value: $sheet.previewScale, in: Cheatsheet.previewScaleRange, step: 0.05) {
@@ -131,28 +166,34 @@ struct CheatsheetDetailView: View {
                     Text("Position")
                     VStack(spacing: 10) {
                         PositionPreviewView(sheet: $sheet)
-                        Button("Center") {
-                            sheet.position = .center
+                        HStack(spacing: 12) {
+                            Button("Center") {
+                                sheet.position = .center
+                            }
+                            .disabled(sheet.position == .center)
+                            .accessibilityIdentifier("detail.center")
+                            // Opens it as it will appear: where and how big.
+                            Button("Preview on Screen") {
+                                overlay.show(sheet)
+                            }
+                            .help("Open the cheatsheet to check its size and position")
+                            .accessibilityIdentifier("detail.previewOnScreen")
                         }
-                        .disabled(sheet.position == .center)
-                        .accessibilityIdentifier("detail.center")
                     }
                     .frame(maxWidth: .infinity)
                 }
                 geometryBehaviorPicker(
-                    "Cheatsheet Dragging",
+                    "Drag to move",
+                    remembered: "position",
                     selection: $sheet.dragBehavior,
                     identifier: "detail.dragBehavior"
                 )
                 geometryBehaviorPicker(
-                    "Cheatsheet Resizing",
+                    "Drag to resize",
+                    remembered: "size",
                     selection: $sheet.resizeBehavior,
                     identifier: "detail.resizeBehavior"
                 )
-                Button("Preview on Screen") {
-                    overlay.show(sheet)
-                }
-                .accessibilityIdentifier("detail.previewOnScreen")
             }
 
             Section {
@@ -179,7 +220,7 @@ struct CheatsheetDetailView: View {
                 store.delete(sheet)
             }
         } message: {
-            Text("“\(sheet.name)” and its imported files will be removed.")
+            Text(CheatsheetsSettingsView.deletionMessage)
         }
         .sheet(item: $reviewingFile) { target in
             SyncReviewSheet(file: target.file, sheetID: sheet.id) {
@@ -207,12 +248,12 @@ struct CheatsheetDetailView: View {
         switch result {
         case .linked:
             break
-        case .needsReview:
-            reviewingFile = ReviewTarget(file: file)
+        case .needsReview(let name):
+            reviewingFile = ReviewTarget(file: name)
         case .differentKind(let expected, let chosen):
             linkProblem = "“\(file)” is \(expected.descriptionWithArticle), but the file you chose is \(chosen.descriptionWithArticle). Choose the same kind of file."
         case .failed:
-            linkProblem = "Cheatsheet couldn't open the file you chose."
+            linkProblem = "The file you chose couldn't be opened."
         }
     }
 
@@ -235,6 +276,9 @@ struct CheatsheetDetailView: View {
         if let other = store.conflictingSheet(with: shortcut, excluding: sheet.id) {
             KeyboardShortcuts.setShortcut(previousShortcut, for: sheet.shortcutName)
             conflictMessage = "\(shortcut) is already used by “\(other.name)”. Kept the previous shortcut."
+        } else if openMethod.usesSearch, shortcut == KeyboardShortcuts.getShortcut(for: .openSearch) {
+            KeyboardShortcuts.setShortcut(previousShortcut, for: sheet.shortcutName)
+            conflictMessage = "\(shortcut) opens the search bar. Kept the previous shortcut."
         } else {
             previousShortcut = shortcut
             conflictMessage = nil
@@ -244,23 +288,62 @@ struct CheatsheetDetailView: View {
         )
     }
 
+    private func webAddress(of file: String) -> URL? {
+        guard MediaKind.of(URL(filePath: file)) == .webpage else { return nil }
+        return WebLocation.url(fromFileAt: store.fileURL(for: sheet, file: file))
+    }
+
+    /// A linked file's original, when its name isn't the copy's: shown
+    /// beside the copy's name so the two are never confused.
+    private func differentlyNamedOriginal(of file: String) -> URL? {
+        guard store.syncsWithOriginals, sheet.links[file] != nil,
+              let original = store.originalURL(ofFile: file, in: sheet),
+              original.lastPathComponent != file else { return nil }
+        return original
+    }
+
     private func documentRow(_ file: String) -> some View {
         let exists = store.fileExists(for: sheet, file: file)
         let state = store.syncState(of: file, in: sheet)
         return HStack {
-            Label(file, systemImage: MediaKind.of(URL(filePath: file)).systemImage)
+            RenamableFileName(file: file) { newName in
+                store.renameFile(file, to: newName, in: sheet.id)
+            }
+            if let original = differentlyNamedOriginal(of: file) {
+                Text("→ \(original.lastPathComponent)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help("Original: \((original.path as NSString).abbreviatingWithTildeInPath)")
+                    .accessibilityIdentifier("detail.originalName")
+            }
+            if let address = webAddress(of: file) {
+                Text(address.host() ?? address.absoluteString)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help(address.absoluteString)
+            }
             if !exists {
                 Label("Missing", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.red)
                     .labelStyle(.titleAndIcon)
                     .help("The app's copy of this file was deleted. Remove the entry or re-add the file.")
-            } else if store.syncsWithOriginals {
-                FileSyncBadge(state: state, isLinked: sheet.links[file] != nil) {
-                    reviewingFile = ReviewTarget(file: file)
-                }
             }
             Spacer()
+            // Before the folder, so turning sync on or off doesn't move it.
+            // Web pages have no file of their own to link.
+            if store.syncsWithOriginals, exists, webAddress(of: file) == nil {
+                FileLinkMenu(
+                    file: file,
+                    sheet: sheet,
+                    state: state,
+                    onReview: { reviewingFile = ReviewTarget(file: file) },
+                    onLinked: { handleLinkResult($0, file: file) }
+                )
+            }
             Button {
                 // The file edits go to: the original while in sync.
                 reveal(store.activeURL(ofFile: file, in: sheet))
@@ -270,17 +353,7 @@ struct CheatsheetDetailView: View {
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
             .disabled(!exists)
-            .help(state == .linked ? "Reveal the original in Finder" : "Reveal Cheatsheet's copy in Finder")
-            if store.syncsWithOriginals, exists {
-                FileSyncMenu(
-                    file: file,
-                    sheet: sheet,
-                    state: state,
-                    onReveal: reveal,
-                    onReview: { reviewingFile = ReviewTarget(file: file) },
-                    onLinked: { handleLinkResult($0, file: file) }
-                )
-            }
+            .help(revealHelp(for: state))
             Button {
                 store.removeFile(file, from: sheet.id)
             } label: {
@@ -293,13 +366,21 @@ struct CheatsheetDetailView: View {
         .frame(height: 29)
     }
 
+    /// The folder shows the file the page comes from: the original while
+    /// in sync; otherwise the cheatsheet's copy, the only up-to-date file.
+    private func revealHelp(for state: FileSyncState) -> String {
+        guard store.syncsWithOriginals else { return "Show in Finder" }
+        return state == .linked ? "Show original in Finder" : "Show the cheatsheet's copy in Finder"
+    }
+
     private func geometryBehaviorPicker(
         _ title: String,
+        remembered: String,
         selection: Binding<GeometryBehavior>,
         identifier: String
     ) -> some View {
         LabeledContent(title) {
-            BehaviorPopUpButton(selection: selection, identifier: identifier)
+            BehaviorPopUpButton(selection: selection, remembered: remembered, identifier: identifier)
         }
     }
 
@@ -384,88 +465,72 @@ struct CheatsheetDetailView: View {
         return nil
     }
 
-    // Custom popover instead of Picker: NSMenu-backed picker items can't
-    // report hover, and hovering a display option highlights that screen.
+    // An AppKit pop-up: it looks like the other dropdowns, and its menu
+    // reports the highlighted option, which outlines that display.
     private var displayPicker: some View {
-        LabeledContent("Show on Display") {
-            Button {
-                isDisplayPopoverPresented = true
-            } label: {
-                HStack(spacing: 5) {
-                    Text(currentDisplayLabel)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+        LabeledContent("Display") {
+            DisplayPopUpButton(
+                options: displayOptions,
+                selectedID: Self.optionID(for: displayChoice.wrappedValue)
+            ) { id in
+                if let choice = displayOptionChoices[id] {
+                    displayChoice.wrappedValue = choice
                 }
             }
-            .popover(isPresented: $isDisplayPopoverPresented, arrowEdge: .bottom) {
-                displayOptions
-                    .padding(8)
-                    .frame(width: 280)
-            }
+            .fixedSize()
         }
     }
 
-    private var currentDisplayLabel: String {
-        switch sheet.target {
-        case .cursorScreen:
-            return "Screen with mouse cursor"
-        case .focusedScreen:
-            return "Screen with focused window"
-        case .specific(let uuid, let name):
-            let connected = NSScreen.screens.contains { $0.displayUUID == uuid }
-            return connected ? name : "\(name) (disconnected)"
+    private static func optionID(for choice: DisplayChoice) -> String {
+        switch choice {
+        case .cursor: "cursor"
+        case .focused: "focused"
+        case .specific(let uuid): "screen:\(uuid)"
         }
     }
 
-    private var displayOptions: some View {
-        let screens = NSScreen.screens.filter { $0.displayUUID != nil }
-        let disconnected: (uuid: String, name: String)? = {
-            if case .specific(let uuid, let name) = sheet.target,
-               !screens.contains(where: { $0.displayUUID == uuid }) {
-                return (uuid, name)
-            }
-            return nil
-        }()
-        return VStack(alignment: .leading, spacing: 2) {
-            displayOptionRow("Screen with mouse cursor", choice: .cursor, highlightUUID: nil)
-            displayOptionRow("Screen with focused window", choice: .focused, highlightUUID: nil)
-            Divider()
-            ForEach(screens, id: \.displayUUID) { screen in
-                displayOptionRow(
-                    screen.localizedName,
-                    choice: .specific(screen.displayUUID!),
-                    highlightUUID: screen.displayUUID
-                )
-            }
-            if let disconnected {
-                displayOptionRow(
-                    "\(disconnected.name) (disconnected — uses cursor screen)",
-                    choice: .specific(disconnected.uuid),
-                    highlightUUID: nil
-                )
-            }
+    /// Both preset options, each connected display, and the saved display
+    /// when it isn't connected (the sheet uses the cursor's screen then).
+    private var displayOptions: [DisplayPopUpButton.Option] {
+        let screens = NSScreen.screens.compactMap { screen in
+            screen.displayUUID.map { (uuid: $0, name: screen.localizedName) }
         }
-        .onDisappear {
-            ScreenHighlighter.shared.hide()
+        var options: [DisplayPopUpButton.Option] = [
+            .init(id: Self.optionID(for: .cursor), title: "Screen with mouse cursor"),
+            .init(id: Self.optionID(for: .focused), title: "Screen with focused window"),
+        ]
+        for (index, screen) in screens.enumerated() {
+            options.append(.init(
+                id: Self.optionID(for: .specific(screen.uuid)),
+                title: screen.name,
+                highlightUUID: screen.uuid,
+                startsGroup: index == 0
+            ))
         }
+        if case .specific(let uuid, let name) = sheet.target, !screens.contains(where: { $0.uuid == uuid }) {
+            options.append(.init(
+                id: Self.optionID(for: .specific(uuid)),
+                title: "\(name) (disconnected — uses cursor screen)",
+                startsGroup: screens.isEmpty
+            ))
+        }
+        return options
     }
 
-    private func displayOptionRow(_ label: String, choice: DisplayChoice, highlightUUID: String?) -> some View {
-        DisplayOptionRow(
-            label: label,
-            isSelected: displayChoice.wrappedValue == choice
-        ) { hovering in
-            if hovering, let highlightUUID {
-                ScreenHighlighter.shared.highlight(displayUUID: highlightUUID)
-            } else {
-                ScreenHighlighter.shared.hide()
+    private var displayOptionChoices: [String: DisplayChoice] {
+        var choices: [String: DisplayChoice] = [
+            Self.optionID(for: .cursor): .cursor,
+            Self.optionID(for: .focused): .focused,
+        ]
+        for screen in NSScreen.screens {
+            if let uuid = screen.displayUUID {
+                choices[Self.optionID(for: .specific(uuid))] = .specific(uuid)
             }
-        } action: {
-            displayChoice.wrappedValue = choice
-            ScreenHighlighter.shared.hide()
-            isDisplayPopoverPresented = false
         }
+        if case .specific(let uuid, _) = sheet.target {
+            choices[Self.optionID(for: .specific(uuid))] = .specific(uuid)
+        }
+        return choices
     }
 }
 
@@ -475,13 +540,30 @@ struct CheatsheetDetailView: View {
 /// any constrained width.
 private struct BehaviorPopUpButton: NSViewRepresentable {
     @Binding var selection: GeometryBehavior
+    /// "position" or "size": what the remembering option keeps.
+    let remembered: String
     let identifier: String
 
-    private static let options: [(behavior: GeometryBehavior, title: String)] = [
-        (.locked, "Don't allow"),
-        (.resets, "Allow — return to configured"),
-        (.remembers, "Allow — remember last"),
-    ]
+    fileprivate static let behaviors: [GeometryBehavior] = [.locked, .resets, .remembers]
+    private static let rememberedKinds = ["position", "size"]
+
+    /// Fits the widest option of either dropdown, so both are the same
+    /// width whatever is selected, with no room to spare.
+    private static let width: CGFloat = {
+        let sizer = NSPopUpButton(frame: .zero, pullsDown: false)
+        sizer.addItems(withTitles: rememberedKinds.flatMap { remembered in
+            behaviors.map { title(for: $0, remembered: remembered) }
+        })
+        return sizer.intrinsicContentSize.width
+    }()
+
+    private static func title(for behavior: GeometryBehavior, remembered: String) -> String {
+        switch behavior {
+        case .locked: "Off"
+        case .resets: "On, reset on next open"
+        case .remembers: "On, remember \(remembered)"
+        }
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(selection: $selection)
@@ -489,17 +571,17 @@ private struct BehaviorPopUpButton: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSPopUpButton {
         let button = NSPopUpButton(frame: .zero, pullsDown: false)
-        button.addItems(withTitles: Self.options.map(\.title))
+        button.addItems(withTitles: Self.behaviors.map { Self.title(for: $0, remembered: remembered) })
         button.target = context.coordinator
         button.action = #selector(Coordinator.selectionChanged(_:))
-        button.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        button.widthAnchor.constraint(equalToConstant: Self.width).isActive = true
         button.setAccessibilityIdentifier(identifier)
         return button
     }
 
     func updateNSView(_ button: NSPopUpButton, context: Context) {
         context.coordinator.selection = $selection
-        let index = Self.options.firstIndex { $0.behavior == selection } ?? 0
+        let index = Self.behaviors.firstIndex(of: selection) ?? 0
         if button.indexOfSelectedItem != index {
             button.selectItem(at: index)
         }
@@ -513,8 +595,8 @@ private struct BehaviorPopUpButton: NSViewRepresentable {
         }
 
         @objc func selectionChanged(_ sender: NSPopUpButton) {
-            guard BehaviorPopUpButton.options.indices.contains(sender.indexOfSelectedItem) else { return }
-            selection.wrappedValue = BehaviorPopUpButton.options[sender.indexOfSelectedItem].behavior
+            guard BehaviorPopUpButton.behaviors.indices.contains(sender.indexOfSelectedItem) else { return }
+            selection.wrappedValue = BehaviorPopUpButton.behaviors[sender.indexOfSelectedItem]
         }
     }
 }
@@ -548,39 +630,3 @@ private struct EmbeddedVerticalScrollView<Content: View>: NSViewRepresentable {
     }
 }
 
-private struct DisplayOptionRow: View {
-    let label: String
-    let isSelected: Bool
-    let onHoverChanged: (Bool) -> Void
-    let action: () -> Void
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "checkmark")
-                    .font(.caption.bold())
-                    .opacity(isSelected ? 1 : 0)
-                Text(label)
-                    .font(.body)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        // The popover gives the first row keyboard focus, which drew a focus
-        // ring (blue border) and altered its metrics — keep rows uniform.
-        .focusEffectDisabled()
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(
-            isHovering ? Color.accentColor.opacity(0.15) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 5)
-        )
-        .onHover { hovering in
-            isHovering = hovering
-            onHoverChanged(hovering)
-        }
-    }
-}
