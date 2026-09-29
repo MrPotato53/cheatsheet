@@ -131,9 +131,10 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         launchApp(sheets: [threePageSheet()])
         openCheatsheetsTab()
 
-        let holdRadio = settingsWindow.radioButtons["Hold to show"]
-        scrollIntoView(holdRadio, in: settingsWindow)
-        holdRadio.click()
+        let behavior = settingsWindow.popUpButtons["detail.activation"]
+        scrollIntoView(behavior, in: settingsWindow)
+        behavior.click()
+        app.menuItems["Hold to show"].click()
         waitForState("activation mode persisted") { $0.sheet(named: "Alpha")?.activation == "hold" }
 
         // The changed mode is honored: shows on key down, hides on key up.

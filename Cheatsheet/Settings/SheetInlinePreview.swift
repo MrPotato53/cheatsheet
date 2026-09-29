@@ -53,7 +53,8 @@ struct SheetInlinePreview: View {
                 shownGallery
                     .id(refreshToken)
                     .frame(height: 112)
-                Text("Click to preview, shift-click to select a range, ⌘-click to toggle. Drag thumbnails (or a selection) to reorder or to move them in and out of the hidden section. Right-click to rotate, flip, or hide (⌫ hides too).")
+                // Selection clicks (shift, ⌘) work as elsewhere on macOS.
+                Text("Drag to reorder or hide · Right-click for more")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -235,7 +236,7 @@ struct SheetInlinePreview: View {
         .buttonStyle(.borderless)
         .padding(.horizontal, 7)
         .padding(.vertical, 10)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .glassEffect(in: .capsule)
         .padding(.top, 8)
         // Clears text pages' vertical scroll bar at the trailing edge.
         .padding(.trailing, 24)
@@ -252,7 +253,7 @@ struct SheetInlinePreview: View {
         .font(.title3)
         .buttonStyle(.borderless)
         .padding(7)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .glassEffect(.regular.interactive(), in: .circle)
         .padding(8)
         .help("Open this page in the cheatsheet")
         .accessibilityIdentifier("preview.openPage")

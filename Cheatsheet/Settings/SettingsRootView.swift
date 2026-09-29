@@ -13,6 +13,8 @@ struct SettingsRootView: View {
                     CheatsheetsSettingsView()
                         .tabItem { Label("Cheatsheets", systemImage: "rectangle.stack") }
                 }
+                // Like System Settings: no control is focused on open.
+                .opensUnfocused()
             } else {
                 // SwiftUI keeps a window scene's content alive after close
                 // (confirmed via heap dumps — including the preview's decoded

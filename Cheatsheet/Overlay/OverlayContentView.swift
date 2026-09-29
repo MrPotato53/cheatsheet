@@ -56,6 +56,8 @@ struct OverlayContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.top, hasDragStrip ? Self.dragStripHeight : 0)
+        // The page is content, not a control: it stays on a solid material
+        // so text reads cleanly; only the controls above it are glass.
         .background(.regularMaterial)
         // Ticking a checkbox in rendered markdown edits the file; only the
         // live overlay offers it (settings previews stay read-only).
@@ -138,7 +140,7 @@ struct OverlayContentView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(.thinMaterial, in: Capsule())
+        .glassEffect(in: .capsule)
         .padding(10)
         .accessibilityIdentifier("overlay.editorStatus")
     }
@@ -203,7 +205,7 @@ struct OverlayContentView: View {
         .buttonStyle(.borderless)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(.thinMaterial, in: Capsule())
+        .glassEffect(in: .capsule)
         .padding(.bottom, 12)
         .opacity(isHovering ? 1 : 0.4)
         .animation(.easeInOut(duration: 0.15), value: isHovering)
