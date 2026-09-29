@@ -29,13 +29,32 @@ enum LibraryTransferPanels {
         "Cheatsheets \(now.formatted(.iso8601.year().month().day()))"
     }
 
-    static func isArchive(_ url: URL) -> Bool {
-        url.pathExtension.lowercased() == LibraryArchive.fileExtension
-    }
-
     /// "/" and ":" are path separators to Finder and the file system.
     private static func fileSafe(_ name: String) -> String {
         let cleaned = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
         return cleaned.isEmpty ? "Cheatsheet" : cleaned
+    }
+}
+
+/// What was dropped on the cheatsheet list, sorted by how it's added:
+/// exports are imported, files become pages, links become web pages.
+/// Anything else (other URL schemes) is ignored.
+nonisolated struct DroppedItems: Equatable {
+    let archives: [URL]
+    let files: [URL]
+    let webPages: [WebLocation.Entry]
+
+    init(_ urls: [URL]) {
+        let fileURLs = urls.filter(\.isFileURL)
+        let isArchive = { (url: URL) in url.pathExtension.lowercased() == LibraryArchive.fileExtension }
+        archives = fileURLs.filter(isArchive)
+        files = fileURLs.filter { !isArchive($0) }
+        webPages = urls.filter(WebLocation.isWebScheme).map { url in
+            WebLocation.Entry(url: url, name: WebLocation.defaultName(for: url))
+        }
+    }
+
+    var isEmpty: Bool {
+        archives.isEmpty && files.isEmpty && webPages.isEmpty
     }
 }

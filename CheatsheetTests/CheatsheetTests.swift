@@ -267,6 +267,78 @@ struct CheatsheetStoreTests {
         #expect(!OverlayController.escapeShouldDismiss(dismissEnabled: false, isPinned: true))
     }
 
+    // Launcher matching: letters in order anywhere in the name; continuous
+    // matches first, then earliest start, tightest span, shortest name.
+    @Test func sheetNameMatcherMatchesSubsequencesIgnoringCaseAndAccents() {
+        #expect(SheetNameMatcher.match(query: "gc", in: "Git Commands")?.matchedOffsets == [0, 4])
+        #expect(SheetNameMatcher.match(query: "CAFE", in: "Café notes")?.isContinuous == true)
+        #expect(SheetNameMatcher.match(query: "git cmd", in: "Git Commands") != nil)
+        #expect(SheetNameMatcher.match(query: "xyz", in: "Git Commands") == nil)
+        #expect(SheetNameMatcher.match(query: "   ", in: "Git") == nil)
+    }
+
+    @Test func sheetNameMatcherRanksContinuousThenEarliestThenTightest() {
+        let names = ["Vim scattered im", "Tmux", "Swift Vim", "Vim", "V i m spaced", "Vim motions"]
+        let ranked = SheetNameMatcher.rank(names: names, query: "vim").map { names[$0.index] }
+        // Continuous at offset 0 (shorter name first), then continuous later,
+        // then scattered; "Tmux" doesn't match.
+        #expect(ranked == ["Vim", "Vim motions", "Vim scattered im", "Swift Vim", "V i m spaced"])
+    }
+
+    // Before typing, the search bar lists nothing, the whole library in
+    // order, or recently opened sheets that still exist, newest first.
+    // The search bar also offers Settings; a sheet with the same name wins.
+    @Test func launcherOffersSettingsBelowASheetNamedSettings() {
+        let vim = Cheatsheet(name: "Vim")
+        let titles = { (sheets: [Cheatsheet], query: String) in
+            LauncherResult.ranked(sheets: sheets, query: query).map(\.title)
+        }
+        #expect(titles([vim], "set") == ["Settings"])
+        #expect(titles([vim], "vim") == ["Vim"])
+        #expect(LauncherResult.ranked(sheets: [vim], query: "sett").first?.sheet == nil)
+
+        let named = Cheatsheet(name: "Settings")
+        let results = LauncherResult.ranked(sheets: [vim, named], query: "settings")
+        #expect(results.map(\.title) == ["Settings", "Settings"])
+        #expect(results.first?.sheet?.id == named.id)
+        #expect(results.last?.sheet == nil)
+        // A better match still wins over Settings.
+        #expect(titles([Cheatsheet(name: "Set")], "set") == ["Set", "Settings"])
+    }
+
+    @Test func launcherEmptyStateListsNothingAllOrRecent() {
+        let a = Cheatsheet(name: "A")
+        let b = Cheatsheet(name: "B")
+        let c = Cheatsheet(name: "C")
+        let library = [a, b, c]
+        let deletedID = UUID()
+        #expect(LauncherEmptyState.sheets(for: .nothing, library: library, recentIDs: [b.id]).isEmpty)
+        #expect(LauncherEmptyState.sheets(for: .all, library: library, recentIDs: []).map(\.name) == ["A", "B", "C"])
+        #expect(LauncherEmptyState.sheets(for: .recent, library: library, recentIDs: []).isEmpty)
+        #expect(LauncherEmptyState.sheets(for: .recent, library: library, recentIDs: [c.id, deletedID, a.id]).map(\.name) == ["C", "A"])
+    }
+
+    @Test func recentSheetsMoveReopenedSheetToFrontAndCap() {
+        let ids = (0..<3).map { _ in UUID() }
+        #expect(RecentSheets.recording(ids[2], in: ids, limit: 20) == [ids[2], ids[0], ids[1]])
+        #expect(RecentSheets.recording(UUID(), in: ids, limit: 3).count == 3)
+    }
+
+    @Test func recentSheetsPruneDeletedSheetsKeepingOrder() {
+        let ids = (0..<3).map { _ in UUID() }
+        #expect(RecentSheets.pruned(ids, keeping: [ids[2], ids[0]]) == [ids[0], ids[2]])
+        #expect(RecentSheets.pruned(ids, keeping: []).isEmpty)
+    }
+
+    // A click outside closes only unpinned overlays with the setting on, and
+    // never when it lands on one of the app's own windows.
+    @Test func clickOutsideDismissesOnlyWhenEnabledUnpinnedAndElsewhere() {
+        #expect(OverlayController.clickOutsideShouldDismiss(enabled: true, isPinned: false, clickedOwnWindow: false))
+        #expect(!OverlayController.clickOutsideShouldDismiss(enabled: false, isPinned: false, clickedOwnWindow: false))
+        #expect(!OverlayController.clickOutsideShouldDismiss(enabled: true, isPinned: true, clickedOwnWindow: false))
+        #expect(!OverlayController.clickOutsideShouldDismiss(enabled: true, isPinned: false, clickedOwnWindow: true))
+    }
+
     // The open overlay rebuilds its page list (parsing PDFs) only when a
     // page-affecting field changes — not on size/position/name edits, which
     // fire on every size-slider tick.
@@ -425,5 +497,79 @@ struct LibraryResilienceTests {
         #expect(warmed.hasSamePages(as: inputs(resized)))
         #expect(warmed != inputs(raw))
         #expect(warmed != inputs(rotated))
+    }
+}
+
+struct WebLocationTests {
+    @Test func typedAddressesBecomeWebURLs() {
+        #expect(WebLocation.normalizedURL(from: "example.com/docs")?.absoluteString == "https://example.com/docs")
+        #expect(WebLocation.normalizedURL(from: "  https://example.com  ")?.absoluteString == "https://example.com")
+        #expect(WebLocation.normalizedURL(from: "http://example.com")?.absoluteString == "http://example.com")
+        // Local servers rarely have TLS.
+        #expect(WebLocation.normalizedURL(from: "localhost:3000")?.absoluteString == "http://localhost:3000")
+        #expect(WebLocation.normalizedURL(from: "192.168.1.5:8080/x")?.absoluteString == "http://192.168.1.5:8080/x")
+        #expect(WebLocation.normalizedURL(from: "printer.local")?.absoluteString == "http://printer.local")
+        #expect(WebLocation.normalizedURL(from: "") == nil)
+        #expect(WebLocation.normalizedURL(from: "two words") == nil)
+        #expect(WebLocation.normalizedURL(from: "ftp://example.com") == nil)
+        #expect(WebLocation.normalizedURL(from: "file:///etc/hosts") == nil)
+    }
+
+    @Test func namesAndFileNames() {
+        #expect(WebLocation.defaultName(for: URL(string: "https://www.example.com/a")!) == "example.com")
+        #expect(WebLocation.fileName(for: "API: v2/beta") == "API- v2-beta.webloc")
+        #expect(WebLocation.fileName(for: "  ") == "Web page.webloc")
+        #expect(WebLocation.fileName(for: ".hidden") == "Web page.webloc")
+    }
+
+    @Test func weblocFilesRoundTripAndAreWebPages() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).webloc")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let url = URL(string: "https://example.com/docs?q=1")!
+        try WebLocation.fileData(for: url).write(to: file)
+        #expect(WebLocation.url(fromFileAt: file) == url)
+        #expect(MediaKind.of(file) == .webpage)
+        #expect(!MediaKind.webpage.isSearchable)
+        #expect(!MediaKind.webpage.hasRawView)
+        // A .webloc can hold any URL; only web pages are shown.
+        let mail = try PropertyListSerialization.data(fromPropertyList: ["URL": "mailto:a@b.c"], format: .xml, options: 0)
+        try mail.write(to: file)
+        #expect(WebLocation.url(fromFileAt: file) == nil)
+    }
+
+    @Test func clickedLinksStayOnSameSiteOnly() {
+        let current = URL(string: "https://docs.example.com/guide")!
+        func route(_ target: String, command: Bool = false) -> WebLocation.LinkRoute {
+            WebLocation.route(for: URL(string: target)!, from: current, commandPressed: command)
+        }
+        #expect(route("https://docs.example.com/next") == .stayInOverlay)
+        #expect(route("https://example.com/") == .stayInOverlay)
+        #expect(route("https://www.example.com/") == .stayInOverlay)
+        #expect(route("https://api.docs.example.com/") == .stayInOverlay)
+        #expect(route("https://other.com/") == .openInBrowser)
+        #expect(route("https://notexample.com/") == .openInBrowser)
+        #expect(route("https://docs.example.com/next", command: true) == .openInBrowser)
+        #expect(route("mailto:someone@example.com") == .openInBrowser)
+        #expect(WebLocation.route(for: URL(string: "https://example.com")!, from: nil, commandPressed: false) == .openInBrowser)
+    }
+
+    @MainActor
+    @Test func storeAddsWebPagesAsCopyOnlyWeblocFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CheatsheetStore(rootDirectory: root, defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let first = WebLocation.Entry(url: URL(string: "https://example.com")!, name: "Docs: API")
+        let sheet = try #require(store.addSheet(webPages: [first], assignDefaultShortcut: false))
+        #expect(sheet.name == "Docs: API")
+        #expect(sheet.files == ["Docs- API.webloc"])
+        #expect(sheet.links.isEmpty)
+
+        // Same name again: uniqued, not overwritten.
+        let names = store.addWebPages([first], to: sheet.id)
+        #expect(names == ["Docs- API-1.webloc"])
+        let stored = try #require(store.sheets.first)
+        #expect(stored.files.count == 2)
+        #expect(WebLocation.url(fromFileAt: store.fileURL(for: stored, file: names[0])) == first.url)
+        #expect(store.pages(for: stored).count == 2)
     }
 }

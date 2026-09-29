@@ -128,10 +128,10 @@ final class CheatsheetStore {
     // MARK: - Mutations
 
     @discardableResult
-    func addSheet(files urls: [URL], assignDefaultShortcut: Bool = true) -> Cheatsheet? {
+    func addSheet(files urls: [URL], assignDefaultShortcut: Bool = true, linksOriginals: Bool = true) -> Cheatsheet? {
         guard !urls.isEmpty else { return nil }
         var sheet = Cheatsheet(name: urls[0].deletingPathExtension().lastPathComponent)
-        let copied = copyFiles(urls, into: sheet)
+        let copied = copyFiles(urls, into: sheet, linksOriginals: linksOriginals)
         sheet.files = copied.map(\.name)
         sheet.links = Self.links(of: copied)
         guard !sheet.files.isEmpty else { return nil }
@@ -300,6 +300,7 @@ final class CheatsheetStore {
         guard let shortcut else { return true }
         let isTaken = conflictingSheet(with: shortcut, excluding: sheet.id) != nil
             || shortcut == KeyboardShortcuts.getShortcut(for: .togglePin)
+            || shortcut == KeyboardShortcuts.getShortcut(for: .openSearch)
         if !isTaken {
             KeyboardShortcuts.setShortcut(shortcut, for: sheet.shortcutName)
             return true

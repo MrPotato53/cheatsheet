@@ -9,6 +9,9 @@ struct OverlaySearchField: NSViewRepresentable {
     let text: String
     /// Each new value (re)focuses the field.
     let focusRequest: Int
+    var placeholder = "Search"
+    var fontSize = NSFont.systemFontSize
+    var accessibilityID = "overlay.search.field"
     let onChange: (String) -> Void
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
@@ -34,12 +37,12 @@ struct OverlaySearchField: NSViewRepresentable {
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
-        field.placeholderString = "Search"
-        field.font = .systemFont(ofSize: NSFont.systemFontSize)
+        field.placeholderString = placeholder
+        field.font = .systemFont(ofSize: fontSize)
         field.cell?.isScrollable = true
         field.cell?.wraps = false
         field.delegate = context.coordinator
-        field.setAccessibilityIdentifier("overlay.search.field")
+        field.setAccessibilityIdentifier(accessibilityID)
         return field
     }
 

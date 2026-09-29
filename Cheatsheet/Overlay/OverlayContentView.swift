@@ -62,6 +62,7 @@ struct OverlayContentView: View {
         .environment(\.markdownTaskHandler) { [controller, session] url, line, checked in
             controller.setTask(atLine: line, checked: checked, url: url, in: session)
         }
+        .environment(\.isLiveOverlay, true)
         .overlay(alignment: .bottom) {
             if session.pages.count > 1, session.editor == nil {
                 pageControls

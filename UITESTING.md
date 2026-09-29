@@ -11,7 +11,7 @@ The shared `Cheatsheet` scheme has two test plans:
 | Plan | Runs | Use |
 | --- | --- | --- |
 | `Unit` (default) | `CheatsheetTests` only — ~10 s, no UI, works with the screen off | everyday development, `⌘U` |
-| `Full` | unit + `CheatsheetUITests` | before committing |
+| `Full` | unit + `CheatsheetUITests` | on request (comprehensive; drives the real app) |
 
 ```sh
 ./test.sh          # Unit plan
@@ -20,7 +20,12 @@ The shared `Cheatsheet` scheme has two test plans:
 
 In Xcode, switch plans from the test navigator's plan menu. A pre-commit hook
 (`.githooks/pre-commit`, enabled with `git config core.hooksPath .githooks`)
-runs the Full plan; `SKIP_UI_TESTS=1 git commit …` runs only the unit tests.
+runs the Unit plan; `git commit --no-verify` skips it.
+
+UI test runs load Apple's XCTAutomationSupport into apps XCUITest touches.
+It has crashed third-party apps mid-run (Terminal, Finder, VS Code — all
+inside `XCTAutomationSession`), so run the Full plan from a terminal you
+don't mind losing and don't commit from an editor while it runs.
 
 Notes for UI tests:
 

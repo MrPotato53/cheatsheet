@@ -64,14 +64,25 @@ final class OverlayPanel: NSPanel {
         super.sendEvent(event)
     }
 
-    /// ⌘X/C/V/A/Z in the editor and search field (see EditingShortcut).
+    /// ⌘X/C/V/A/Z in the editor, search field and web pages (see
+    /// EditingShortcut): with no Edit menu nothing else delivers them.
     private func performEditingShortcut(_ event: NSEvent) -> Bool {
         guard
-            firstResponder is NSText,
+            firstResponder is NSText || isWebViewFocused,
             let key = event.charactersIgnoringModifiers,
             let action = EditingShortcut.action(forKey: key, modifiers: event.modifierFlags)
         else { return false }
         return NSApp.sendAction(action, to: nil, from: self)
+    }
+
+    /// A web page (or a field in one) has keyboard focus.
+    var isWebViewFocused: Bool {
+        var view = firstResponder as? NSView
+        while let current = view {
+            if current is WKWebView { return true }
+            view = current.superview
+        }
+        return false
     }
 
     private func deliverUnmodifiedScroll(_ event: NSEvent) -> Bool {

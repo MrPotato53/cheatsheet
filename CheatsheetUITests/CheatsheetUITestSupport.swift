@@ -489,8 +489,16 @@ class CheatsheetUITestCase: XCTestCase {
         return running.first { $0.bundleURL?.standardizedFileURL.resolvingSymlinksInPath() == expected }?.bundleURL
     }
 
+    /// Brings Finder forward the way a Dock click does (LaunchServices), not
+    /// via XCUIApplication: that loads XCUITest's automation support into
+    /// Finder, which has crashed it. (The runner can't take focus itself,
+    /// and apps can't resign activation on their own on current macOS.)
     func deactivateApp(file: StaticString = #filePath, line: UInt = #line) {
-        XCUIApplication(bundleIdentifier: "com.apple.finder").activate()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-a", "Finder"]
+        try? process.run()
+        process.waitUntilExit()
         waitForState(timeout: 5, "app deactivated", file: file, line: line) { !$0.appIsActive }
     }
 

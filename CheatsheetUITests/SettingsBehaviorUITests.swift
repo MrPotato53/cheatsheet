@@ -24,7 +24,7 @@ final class SettingsBehaviorUITests: CheatsheetUITestCase {
         XCTAssertTrue(picker.waitForExistence(timeout: 5), "dock icon policy picker not found")
 
         picker.click()
-        app.menuItems["No Dock icon"].click()
+        app.menuItems["Never"].click()
         waitForState("accessory even with settings open under Never") { state in
             state.activationPolicy == "accessory" && state.settingsVisible
         }
@@ -422,6 +422,18 @@ private extension CGSize {
 // MARK: - Sync with original files
 
 final class OriginalSyncUITests: CheatsheetUITestCase {
+    private func waitForValue(of element: XCUIElement, _ value: String) -> Bool {
+        let predicate = NSPredicate(format: "value == %@", value)
+        return XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: element)], timeout: 5) == .completed
+    }
+
+    private func sheetAttachment(_ name: String) {
+        let attachment = XCTAttachment(screenshot: app.sheets.firstMatch.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     private func screenshot(_ name: String) {
         let attachment = XCTAttachment(screenshot: settingsWindow.screenshot())
         attachment.name = name
@@ -442,36 +454,77 @@ final class OriginalSyncUITests: CheatsheetUITestCase {
 
         openCheatsheetsTab()
         selectSheetInSidebar("Notes")
-        // Seeded files have no original: "Copy only", shown straight away.
-        let copyOnly = settingsWindow.staticTexts["detail.copyOnly"]
-        XCTAssertTrue(copyOnly.waitForExistence(timeout: 5), "status didn't appear after enabling sync")
-        screenshot("1 copy only after enabling sync")
+        // Seeded files have no original: a "not linked" chain, shown straight away.
+        // The menu and its button both carry the identifier.
+        let link = settingsWindow.descendants(matching: .any).matching(identifier: "detail.fileLink").firstMatch
+        XCTAssertTrue(link.waitForExistence(timeout: 5), "link status didn't appear after enabling sync")
+        XCTAssertTrue(waitForValue(of: link, "notLinked"), "seeded file should be not linked")
+        screenshot("1 not linked after enabling sync")
 
         postDebug("divergeOriginal:Notes")
-        let review = settingsWindow.buttons["detail.reviewSync"]
-        XCTAssertTrue(review.waitForExistence(timeout: 5), "mismatched original should ask for review")
+        XCTAssertTrue(waitForValue(of: link, "needsReview"), "mismatched original should ask for review")
         screenshot("2 review needed")
+        link.click()
+        let review = app.menuItems["Review Differences…"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5), "link menu should offer review")
         review.click()
 
         let unlink = app.buttons["review.unlink"]
         XCTAssertTrue(unlink.waitForExistence(timeout: 5), "review sheet didn't open")
-        XCTAssertTrue(app.buttons["review.useOriginal"].exists)
-        XCTAssertTrue(app.buttons["review.useCopy"].exists)
-        XCTAssertTrue(app.buttons["review.keepBoth"].exists)
-        let sheetShot = XCTAttachment(screenshot: app.sheets.firstMatch.screenshot())
-        sheetShot.name = "3 review sheet"
-        sheetShot.lifetime = .keepAlways
-        add(sheetShot)
+        // Nothing starts ticked; ticking cards names the outcome.
+        let keep = app.buttons["review.keep"]
+        XCTAssertTrue(keep.exists)
+        XCTAssertFalse(keep.isEnabled, "no version is chosen yet")
+        sheetAttachment("3 review sheet")
+        let originalCard = app.descendants(matching: .any).matching(identifier: "review.originalCard").firstMatch
+        let copyCard = app.descendants(matching: .any).matching(identifier: "review.copyCard").firstMatch
+        originalCard.click()
+        XCTAssertEqual(keep.label, "Keep Original")
+        sheetAttachment("3b original ticked")
+        copyCard.click()
+        XCTAssertEqual(keep.label, "Keep Both")
+        originalCard.click()
+        XCTAssertEqual(keep.label, "Keep Copy")
+
+        // Overwriting the original asks first; cancelling keeps the review.
+        keep.click()
+        let confirm = app.buttons["review.confirmOverwrite"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "overwriting the original should ask first")
+        sheetAttachment("3c overwrite confirmation")
+        app.typeKey(.escape, modifierFlags: []) // the dialog's Cancel
+        XCTAssertTrue(unlink.waitForExistence(timeout: 2), "cancelling should return to the review")
+
+        // Hovering a card offers Quick Look.
+        copyCard.hover()
+        let preview = app.buttons["review.preview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 2), "hovering a card should offer a preview")
+        preview.click()
+        sleep(2)
+        let quickLookShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        quickLookShot.name = "3d quick look"
+        quickLookShot.lifetime = .keepAlways
+        add(quickLookShot)
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(unlink.waitForExistence(timeout: 2), "closing Quick Look shouldn't close the review")
 
         unlink.click()
-        XCTAssertTrue(copyOnly.waitForExistence(timeout: 5), "unlinked file should be copy only")
+        XCTAssertTrue(waitForValue(of: link, "notLinked"), "unlinked file should be not linked")
 
         // Off again: status disappears immediately, without other clicks.
         openSettingsTab("General")
         toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click() // off
         openSettingsTab("Cheatsheets")
         XCTAssertTrue(settingsWindow.staticTexts["todo.md"].waitForExistence(timeout: 5))
-        XCTAssertFalse(copyOnly.exists, "status should clear as soon as sync is off")
+        XCTAssertFalse(link.exists, "link status should clear as soon as sync is off")
         screenshot("4 sync off")
+
+        // Double-click renames the cheatsheet's copy in place.
+        settingsWindow.staticTexts["todo.md"].doubleClick()
+        let field = settingsWindow.textFields["detail.renameField"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "double-click should start renaming")
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText("Groceries\r")
+        XCTAssertTrue(settingsWindow.staticTexts["Groceries.md"].waitForExistence(timeout: 5), "rename should show the new name")
+        screenshot("5 renamed")
     }
 }

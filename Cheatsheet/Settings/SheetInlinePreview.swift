@@ -10,7 +10,10 @@ import UniformTypeIdentifiers
 /// section. Transform actions apply to the whole selection.
 struct SheetInlinePreview: View {
     let sheet: Cheatsheet
+    /// Bumped to re-render every page from disk (files edited elsewhere).
+    var refreshToken = 0
     @Environment(CheatsheetStore.self) private var store
+    @Environment(OverlayController.self) private var overlay
     @State private var shownPages: [SheetPage] = []
     @State private var hiddenPages: [SheetPage] = []
     @State private var selectedShown: Set<SheetPage> = []
@@ -26,7 +29,7 @@ struct SheetInlinePreview: View {
                 if let previewPage {
                     MediaPageView(page: previewPage)
                         .pageTransform(previewPage)
-                        .id(previewPage)
+                        .id("\(previewPage.hashValue)#\(refreshToken)")
                 } else {
                     ContentUnavailableView("No pages", systemImage: "doc")
                 }
@@ -40,9 +43,15 @@ struct SheetInlinePreview: View {
                     transformButtons
                 }
             }
+            .overlay(alignment: .topLeading) {
+                if let previewPage, !previewPage.isHidden {
+                    openButton(previewPage)
+                }
+            }
 
             if shownPages.count > 1 || !hiddenPages.isEmpty {
                 shownGallery
+                    .id(refreshToken)
                     .frame(height: 112)
                 Text("Click to preview, shift-click to select a range, ⌘-click to toggle. Drag thumbnails (or a selection) to reorder or to move them in and out of the hidden section. Right-click to rotate, flip, or hide (⌫ hides too).")
                     .font(.caption2)
@@ -55,6 +64,9 @@ struct SheetInlinePreview: View {
         }
         .padding(.vertical, 4)
         .task(id: sheet) {
+            reload()
+        }
+        .onChange(of: refreshToken) {
             reload()
         }
     }
@@ -155,6 +167,7 @@ struct SheetInlinePreview: View {
             } else {
                 DisclosureGroup(isExpanded: $isHiddenSectionExpanded) {
                     hiddenGallery
+                        .id(refreshToken)
                         .frame(height: 112)
                         .opacity(0.7)
                 } label: {
@@ -226,6 +239,23 @@ struct SheetInlinePreview: View {
         .padding(.top, 8)
         // Clears text pages' vertical scroll bar at the trailing edge.
         .padding(.trailing, 24)
+    }
+
+    /// Full size, with the overlay's own tools (editing included). Hidden
+    /// pages aren't in the overlay, so they don't get one.
+    private func openButton(_ page: SheetPage) -> some View {
+        Button {
+            overlay.show(sheet, at: page)
+        } label: {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+        }
+        .font(.title3)
+        .buttonStyle(.borderless)
+        .padding(7)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .padding(8)
+        .help("Open this page in the cheatsheet")
+        .accessibilityIdentifier("preview.openPage")
     }
 
     // MARK: - State
@@ -426,7 +456,7 @@ enum PageThumbnailRenderer {
                 .thumbnail(of: CGSize(width: 112, height: 112), for: .mediaBox)
         case .image:
             rendered = imageThumbnail(at: page.url, maxPixels: 112)
-        case .markdown, .html, .text, .unsupported:
+        case .markdown, .html, .text, .webpage, .unsupported:
             rendered = nil
         }
         if let rendered {

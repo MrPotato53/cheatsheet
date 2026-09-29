@@ -4,17 +4,22 @@ import KeyboardShortcuts
 
 extension KeyboardShortcuts.Name {
     static let togglePin = Self("togglePinCheatsheet", default: .init(.p, modifiers: [.command, .shift]))
+    /// Opens the cheatsheet search bar; registered only while the open method
+    /// includes search (see updateOpenMethodAvailability).
+    static let openSearch = Self("openCheatsheetSearch", default: .init(.space, modifiers: [.command, .shift]))
 }
 
 @MainActor
 final class HotkeyManager {
     private let store: CheatsheetStore
     private let overlay: OverlayController
+    private let launcher: LauncherController
     private var registeredNames: [String: KeyboardShortcuts.Name] = [:]
 
-    init(store: CheatsheetStore, overlay: OverlayController) {
+    init(store: CheatsheetStore, overlay: OverlayController, launcher: LauncherController) {
         self.store = store
         self.overlay = overlay
+        self.launcher = launcher
         restoreShortcutsClearedByRemovedMigration()
         KeyboardShortcuts.onKeyDown(for: .togglePin) { @Sendable in
             Task { @MainActor in
@@ -25,6 +30,11 @@ final class HotkeyManager {
         // overlay is open (see updatePinShortcutAvailability), so ⌘⇧P
         // reaches other apps whenever there's nothing on screen to pin.
         updatePinShortcutAvailability()
+        KeyboardShortcuts.onKeyDown(for: .openSearch) { @Sendable in
+            Task { @MainActor in
+                AppModel.shared.launcher.toggle()
+            }
+        }
     }
 
     /// A since-removed build shipped a one-time migration that stripped the
@@ -97,10 +107,38 @@ final class HotkeyManager {
                 }
             }
         }
+        // Registering a handler or assigning a shortcut (new sheets, imports)
+        // registers the key combination; re-apply the open method on top.
+        updateOpenMethodAvailability()
+    }
+
+    /// Registers only the global shortcuts the open method uses. Unused ones
+    /// are unregistered, never cleared, so they come back unchanged when the
+    /// method changes. Disables go first: if the search shortcut equals a
+    /// sheet's, unregistering the sheet must not undo the search shortcut.
+    func updateOpenMethodAvailability() {
+        let method = SheetOpenMethod.current
+        let sheetNames = store.sheets.map(\.shortcutName)
+        if !method.usesSheetShortcuts {
+            KeyboardShortcuts.disable(sheetNames)
+        }
+        if !method.usesSearch {
+            KeyboardShortcuts.disable(.openSearch)
+            launcher.hide()
+        }
+        if method.usesSheetShortcuts {
+            KeyboardShortcuts.enable(sheetNames)
+        }
+        if method.usesSearch {
+            KeyboardShortcuts.enable(.openSearch)
+        }
     }
 
     func handleKeyDown(sheetID: Cheatsheet.ID) {
-        guard let sheet = store.sheets.first(where: { $0.id == sheetID }) else { return }
+        guard
+            SheetOpenMethod.current.usesSheetShortcuts,
+            let sheet = store.sheets.first(where: { $0.id == sheetID })
+        else { return }
         switch sheet.activation {
         case .toggle: overlay.toggle(sheet)
         case .hold: overlay.show(sheet)
@@ -109,6 +147,7 @@ final class HotkeyManager {
 
     func handleKeyUp(sheetID: Cheatsheet.ID) {
         guard
+            SheetOpenMethod.current.usesSheetShortcuts,
             let sheet = store.sheets.first(where: { $0.id == sheetID }),
             sheet.activation == .hold
         else { return }
