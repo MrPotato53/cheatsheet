@@ -6,7 +6,8 @@ import SwiftUI
 /// Before typing it lists nothing, all, or recent sheets (LauncherEmptyState).
 struct LauncherView: View {
     let controller: LauncherController
-    private let cornerRadius: CGFloat = 14
+    /// Half the bar's height: a capsule until results appear, like Spotlight.
+    private let cornerRadius: CGFloat = LauncherLayout.barHeight / 2
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,12 +22,9 @@ struct LauncherView: View {
             height: LauncherLayout.height(resultCount: controller.results.count),
             alignment: .top
         )
-        .background(.regularMaterial)
+        // The glass draws its own lit edge, so no border.
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(.separator, lineWidth: 1)
-        )
+        .glassEffect(in: .rect(cornerRadius: cornerRadius))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("launcher.root")
     }

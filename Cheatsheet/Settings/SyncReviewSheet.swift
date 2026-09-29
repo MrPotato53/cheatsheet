@@ -344,7 +344,7 @@ private struct VersionCard: View {
                 Button(action: onPreview) {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .padding(5)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                        .glassEffect(.regular.interactive(), in: .circle)
                 }
                 .buttonStyle(.plain)
                 .padding(6)

@@ -27,10 +27,11 @@ struct CheatsheetDetailView: View {
 
     var body: some View {
         Form {
-            Section("Name") {
+            // What it is and how it opens, as the sidebar lists it.
+            Section {
                 TextField("Name", text: $sheet.name)
-                    .labelsHidden()
                     .accessibilityIdentifier("detail.name")
+                shortcutRows
             }
 
             // Page reordering lives solely in the Pages gallery below; this
@@ -83,39 +84,6 @@ struct CheatsheetDetailView: View {
                 }
             }
 
-            Section("Keyboard Shortcut") {
-                LabeledContent("Shortcut") {
-                    KeyboardShortcuts.Recorder("", name: sheet.shortcutName, onChange: handleShortcutChange)
-                }
-                .disabled(!openMethod.usesSheetShortcuts)
-                .accessibilityIdentifier("detail.shortcut")
-                Picker("Shortcut behavior", selection: $sheet.activation) {
-                    ForEach(ActivationMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-                .disabled(!openMethod.usesSheetShortcuts)
-                .accessibilityIdentifier("detail.activation")
-                if !openMethod.usesSheetShortcuts {
-                    Text("Keyboard shortcuts are off: cheatsheets open from the search bar. To use them too, set General → Open cheatsheets with to “\(SheetOpenMethod.both.label)”.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("detail.shortcutInactive")
-                }
-                if let conflictMessage {
-                    Text(conflictMessage)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-                if let systemConflictWarning {
-                    Text(systemConflictWarning)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .accessibilityIdentifier("detail.systemShortcutWarning")
-                }
-            }
-
             Section("When Opened") {
                 Picker("Start on", selection: startPageChoice) {
                     Text("First page").tag(StartPageChoice.first)
@@ -139,7 +107,8 @@ struct CheatsheetDetailView: View {
                 displayPicker
                 Toggle("Preload start page", isOn: $sheet.keepsStartPageLoaded)
                     .accessibilityIdentifier("detail.keepStartPageLoaded")
-                Text("Opens instantly by keeping the start page ready in memory, which uses about as much memory as that page's content.")
+                    .help("Uses about as much memory as that page's content")
+                Text("Keeps the start page in memory so it opens instantly.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -260,6 +229,41 @@ struct CheatsheetDetailView: View {
     private func reveal(_ url: URL) {
         OriginalFiles.withAccess(to: url) {
             NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+
+    // MARK: - Shortcut
+
+    @ViewBuilder
+    private var shortcutRows: some View {
+        LabeledContent("Shortcut") {
+            KeyboardShortcuts.Recorder("", name: sheet.shortcutName, onChange: handleShortcutChange)
+        }
+        .disabled(!openMethod.usesSheetShortcuts)
+        .accessibilityIdentifier("detail.shortcut")
+        Picker("Shortcut behavior", selection: $sheet.activation) {
+            ForEach(ActivationMode.allCases) { mode in
+                Text(mode.label).tag(mode)
+            }
+        }
+        .disabled(!openMethod.usesSheetShortcuts)
+        .accessibilityIdentifier("detail.activation")
+        if !openMethod.usesSheetShortcuts {
+            Text("Keyboard shortcuts are off: cheatsheets open from the search bar. To use them too, set General → Open cheatsheets with to “\(SheetOpenMethod.both.label)”.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("detail.shortcutInactive")
+        }
+        if let conflictMessage {
+            Text(conflictMessage)
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
+        if let systemConflictWarning {
+            Text(systemConflictWarning)
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .accessibilityIdentifier("detail.systemShortcutWarning")
         }
     }
 

@@ -99,10 +99,17 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            Section("Closing Cheatsheets") {
-                Toggle("Close cheatsheets with Escape", isOn: $dismissWithEsc)
+            Section("While a Cheatsheet Is Open") {
+                Picker("Buttons", selection: $overlayButtonsMode) {
+                    ForEach(OverlayButtonsMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .accessibilityIdentifier("general.overlayButtonsMode")
+                .help("Collapsed buttons are grouped behind ☰ in the cheatsheet's corner")
+                Toggle("Close with Escape", isOn: $dismissWithEsc)
                     .accessibilityIdentifier("general.dismissWithEsc")
-                Toggle("Close cheatsheets when clicking outside them", isOn: $dismissOnClickOutside)
+                Toggle("Close when clicking outside it", isOn: $dismissOnClickOutside)
                     .accessibilityIdentifier("general.dismissOnClickOutside")
                 LabeledContent("Pin or unpin shortcut") {
                     KeyboardShortcuts.Recorder("", name: .togglePin) { shortcut in
@@ -118,19 +125,7 @@ struct GeneralSettingsView: View {
                         .foregroundStyle(.orange)
                         .accessibilityIdentifier("general.systemShortcutWarning")
                 }
-                Text("A pinned cheatsheet stays open until you unpin it. The shortcut works while a cheatsheet is open.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Cheatsheet Buttons") {
-                Picker("Buttons in open cheatsheets", selection: $overlayButtonsMode) {
-                    ForEach(OverlayButtonsMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .accessibilityIdentifier("general.overlayButtonsMode")
-                Text("Collapsing groups the buttons behind a single ☰ button in the cheatsheet's corner.")
+                Text("A pinned cheatsheet stays open until you unpin it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -141,7 +136,7 @@ struct GeneralSettingsView: View {
                     set: { isOn in Task { await store.setSyncsWithOriginals(isOn) } }
                 ))
                 .accessibilityIdentifier("general.syncWithOriginals")
-                Text("Files you add are copied into the cheatsheet. With sync on, each copy updates when its original changes, and edits made in a cheatsheet are saved to the original. If both have changed, you're asked which to keep before anything is overwritten.")
+                Text("Files are copied into the cheatsheet. With sync on, copies follow their originals and edits save back; if both changed, you choose which to keep.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

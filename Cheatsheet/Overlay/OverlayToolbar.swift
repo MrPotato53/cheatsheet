@@ -36,10 +36,20 @@ struct OverlayToolbar: View {
     let isOverlayHovered: Bool
     @AppStorage(OverlayButtonsMode.defaultsKey, store: AppDefaults.store) private var mode = OverlayButtonsMode.expanded
     @State private var isExpanded = false
+    /// Glass shapes that turn into one another: ☰ into the buttons, the
+    /// search button into the search bar.
+    @Namespace private var glass
 
     private var collapses: Bool { mode.collapses }
 
     var body: some View {
+        GlassEffectContainer(spacing: 6) {
+            controls
+        }
+        .animation(.smooth(duration: 0.25), value: session.search.isActive)
+    }
+
+    private var controls: some View {
         HStack(spacing: 6) {
             if session.search.isActive {
                 searchBar
@@ -130,6 +140,7 @@ struct OverlayToolbar: View {
         .overlayControl()
         .accessibilityIdentifier("overlay.moreButtons")
         .circleChrome()
+        .glassEffectID("menu", in: glass)
         .opacity(session.isPinned || isOverlayHovered || isExpanded ? 1 : 0)
         .animation(.easeInOut(duration: 0.15), value: isOverlayHovered)
         .help(mode == .expandOnClick ? (isExpanded ? "Hide controls" : "Show controls") : "Cheatsheet buttons")
@@ -145,6 +156,7 @@ struct OverlayToolbar: View {
         .overlayControl()
         .accessibilityIdentifier("overlay.search")
         .circleChrome()
+        .glassEffectID("search", in: glass)
         .opacity(revealed())
         .animation(.easeInOut(duration: 0.15), value: isOverlayHovered)
         .help("Search pages (⌘F)")
@@ -162,6 +174,7 @@ struct OverlayToolbar: View {
         .accessibilityIdentifier("overlay.rawToggle")
         .accessibilityValue(page.showsRaw ? "raw" : "formatted")
         .circleChrome()
+        .glassEffectID("raw", in: glass)
         .opacity(revealed())
         .animation(.easeInOut(duration: 0.15), value: isOverlayHovered)
         .help(page.showsRaw ? "Show formatted" : "Show raw source")
@@ -177,6 +190,7 @@ struct OverlayToolbar: View {
         .overlayControl()
         .accessibilityIdentifier("overlay.edit")
         .circleChrome()
+        .glassEffectID("edit", in: glass)
         .opacity(revealed())
         .animation(.easeInOut(duration: 0.15), value: isOverlayHovered)
         .help("Edit this page (⌘E)")
@@ -188,12 +202,15 @@ struct OverlayToolbar: View {
         } label: {
             Label("Done", systemImage: "checkmark")
                 .font(.callout.weight(.medium))
+                .foregroundStyle(.white)
                 .padding(.horizontal, 10)
                 .frame(height: 28)
         }
         .overlayControl()
         .accessibilityIdentifier("overlay.doneEditing")
-        .background(.thinMaterial, in: Capsule())
+        // The one prominent action while editing, as in a toolbar.
+        .glassEffect(.regular.tint(.accentColor).interactive(), in: .capsule)
+        .glassEffectID("done", in: glass)
         .help("Finish editing (esc)")
     }
 
@@ -207,6 +224,7 @@ struct OverlayToolbar: View {
         .overlayControl()
         .accessibilityIdentifier("overlay.pin")
         .circleChrome()
+        .glassEffectID("pin", in: glass)
         .opacity(revealed(always: session.isPinned))
         .animation(.easeInOut(duration: 0.15), value: isOverlayHovered)
         .help(session.isPinned ? "Unpin: closes normally again" : "Pin: stays open until unpinned")
@@ -257,7 +275,9 @@ struct OverlayToolbar: View {
         .overlayControl()
         .padding(.horizontal, 10)
         .frame(height: 28)
-        .background(.thinMaterial, in: Capsule())
+        .glassEffect(in: .capsule)
+        // Grows out of the search button.
+        .glassEffectID("search", in: glass)
     }
 }
 
@@ -292,7 +312,7 @@ struct SyncReviewBanner: View {
         }
         .padding(10)
         .frame(maxWidth: 420, alignment: .leading)
-        .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .glassEffect(in: .rect(cornerRadius: 12))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("overlay.review")
     }
@@ -334,7 +354,8 @@ extension View {
             .pointingHandCursor()
     }
 
+    /// A round Liquid Glass button that responds to the pointer.
     func circleChrome() -> some View {
-        padding(5).background(.thinMaterial, in: Circle())
+        padding(5).glassEffect(.regular.interactive(), in: .circle)
     }
 }
