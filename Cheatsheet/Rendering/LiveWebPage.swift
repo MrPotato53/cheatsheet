@@ -18,6 +18,15 @@ final class LiveWebPage {
     private(set) var hasContent = false
     /// Why the last load failed; nil once a load succeeds.
     private(set) var failure: String?
+    /// Bumped each time a page finishes loading, so an open search can
+    /// recount the new page.
+    private(set) var loadCount = 0
+
+    /// Search marks: wanted by the overlay, and what the current document
+    /// carries (a newly loaded document carries none).
+    @ObservationIgnored private var wantedHighlight: SearchHighlight?
+    @ObservationIgnored private var appliedHighlight: SearchHighlight?
+    @ObservationIgnored private var isLoadFinished = false
 
     @ObservationIgnored private var storedWebView: MarkdownWebView.OverlayAwareWebView?
     @ObservationIgnored private var navigator: Navigator?
@@ -88,10 +97,40 @@ final class LiveWebPage {
         storedWebView?.pauseAllMediaPlayback(completionHandler: nil)
     }
 
+    /// Marks search matches, now or once the page has loaded.
+    func setHighlight(_ highlight: SearchHighlight?) {
+        wantedHighlight = highlight
+        applyHighlightIfReady()
+    }
+
+    /// How many matches for `query` the loaded page shows; 0 until it has
+    /// loaded. Counting clears the marks, so they're re-applied after.
+    func matchCount(for query: String) async -> Int {
+        guard isLoadFinished, let webView = storedWebView else { return 0 }
+        appliedHighlight = nil
+        let result = try? await webView.evaluateJavaScript(WebSearchHighlighter.countScript(for: query))
+        applyHighlightIfReady()
+        return (result as? NSNumber)?.intValue ?? 0
+    }
+
+    private func applyHighlightIfReady() {
+        guard isLoadFinished, let webView = storedWebView, appliedHighlight != wantedHighlight else { return }
+        appliedHighlight = wantedHighlight
+        webView.evaluateJavaScript(WebSearchHighlighter.script(for: wantedHighlight), completionHandler: nil)
+    }
+
     fileprivate func didCommit() {
         hasContent = true
         failure = nil
         failedURL = nil
+        isLoadFinished = false
+        appliedHighlight = nil
+    }
+
+    fileprivate func didFinish() {
+        isLoadFinished = true
+        applyHighlightIfReady()
+        loadCount += 1
     }
 
     fileprivate func didFail(_ error: Error) {
@@ -176,6 +215,10 @@ final class LiveWebPage {
             page?.didCommit()
         }
 
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            page?.didFinish()
+        }
+
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             page?.didFail(error)
         }
@@ -208,7 +251,7 @@ enum LiveWebPages {
     private static var recency: [String] = []
 
     static func page(forFile fileURL: URL, address: URL) -> LiveWebPage {
-        let key = "\(fileURL.path)#\(address.absoluteString)"
+        let key = key(file: fileURL, address: address)
         recency.removeAll { $0 == key }
         recency.append(key)
         if let page = pages[key] {
@@ -218,6 +261,17 @@ enum LiveWebPages {
         pages[key] = page
         evictIfNeeded()
         return page
+    }
+
+    /// The kept page for a `.webloc`, if one exists; unlike `page(forFile:)`
+    /// it neither creates one nor counts as a use.
+    static func existingPage(forFile fileURL: URL) -> LiveWebPage? {
+        guard let address = WebLocation.url(fromFileAt: fileURL) else { return nil }
+        return pages[key(file: fileURL, address: address)]
+    }
+
+    private static func key(file fileURL: URL, address: URL) -> String {
+        "\(fileURL.path)#\(address.absoluteString)"
     }
 
     private static func evictIfNeeded() {

@@ -14,6 +14,8 @@ nonisolated struct OverlaySearchState: Equatable {
     var focusRequest = 0
     /// A search has been running long enough to be worth mentioning.
     var isSearching = false
+    /// `matches` cover only the current page (SearchScope.currentPage).
+    var isScopedToPage = false
 
     func highlight(forPage index: Int) -> SearchHighlight? {
         guard isActive, !resultsQuery.isEmpty else { return nil }
@@ -26,7 +28,7 @@ nonisolated struct OverlaySearchState: Equatable {
         if isSearching, resultsQuery != query { return "Searching…" }
         guard !resultsQuery.isEmpty else { return nil }
         let total = matches.total
-        guard total > 0 else { return "No matches" }
+        guard total > 0 else { return isScopedToPage ? "No matches on this page" : "No matches" }
         return current.map { "\($0 + 1) of \(total)" } ?? "\(total)"
     }
 }
@@ -63,9 +65,22 @@ extension OverlayController {
         goToPage(location.page, in: session)
     }
 
+    /// Searching only the current page: paging away searches the new page.
+    func searchPageChanged(in session: OverlaySession) {
+        guard session.search.isActive, SearchScope.current == .currentPage else { return }
+        runSearch(in: session, jumpToFirst: true)
+    }
+
+    /// A web page finished loading while shown: its text is new.
+    func webPageDidLoad(in session: OverlaySession) {
+        guard session.search.isActive else { return }
+        runSearch(in: session, jumpToFirst: false)
+    }
+
     /// Counts matches off the main thread (PDF text search can take a
-    /// moment). A new query jumps to its first match from the current page;
-    /// a page-list rebuild (e.g. raw toggle) just refreshes the counts.
+    /// moment), then in loaded web pages. A new query jumps to its first
+    /// match from the current page; a page-list rebuild (e.g. raw toggle)
+    /// just refreshes the counts.
     func runSearch(in session: OverlaySession, jumpToFirst: Bool) {
         session.searchTask?.cancel()
         let query = session.search.query
@@ -76,6 +91,7 @@ extension OverlayController {
             return
         }
         let pages = session.pages
+        let onlyPage = SearchScope.current == .currentPage ? session.pageIndex : nil
         session.searchTask = Task { [weak self, weak session] in
             try? await Task.sleep(for: Self.searchDebounce)
             guard !Task.isCancelled else { return }
@@ -85,12 +101,14 @@ extension OverlayController {
                 try? await Task.sleep(for: .milliseconds(300))
                 if !Task.isCancelled { session?.search.isSearching = true }
             }
-            let counts = await Task.detached(priority: .userInitiated) {
-                await PageSearch.matchCounts(query: query, pages: pages)
+            var counts = await Task.detached(priority: .userInitiated) {
+                await PageSearch.matchCounts(query: query, pages: pages, onlyPage: onlyPage)
             }.value
+            counts = await Self.addingWebPageCounts(to: counts, query: query, pages: pages, onlyPage: onlyPage)
             indicator.cancel()
             session?.search.isSearching = false
             guard !Task.isCancelled, let self, let session, session.search.query == query else { return }
+            session.search.isScopedToPage = onlyPage != nil
             let matches = SearchMatches(counts: counts)
             let previous = session.search.current
             session.search.matches = matches
@@ -103,6 +121,24 @@ extension OverlayController {
                 self.goToPage(location.page, in: session)
             }
         }
+    }
+
+    /// Web pages are searched only once loaded (a page never shown isn't
+    /// loaded just to search it), in the text the page shows right now.
+    private static func addingWebPageCounts(
+        to counts: [Int],
+        query: String,
+        pages: [SheetPage],
+        onlyPage: Int?
+    ) async -> [Int] {
+        var counts = counts
+        for (index, page) in pages.enumerated() where MediaKind.of(page.url) == .webpage {
+            guard onlyPage == nil || onlyPage == index,
+                  let livePage = LiveWebPages.existingPage(forFile: page.url)
+            else { continue }
+            counts[index] = await livePage.matchCount(for: query)
+        }
+        return counts
     }
 
     /// Search keys, checked before the overlay's own paging/Escape handling.

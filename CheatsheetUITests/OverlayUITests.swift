@@ -107,6 +107,53 @@ final class OverlayUITests: CheatsheetUITestCase {
         waitForText(status, "3 of 3")
     }
 
+    /// A web page is searched in its loaded page: what it shows, not
+    /// hidden markup.
+    @MainActor
+    func testSearchFindsMatchesInLoadedWebPage() throws {
+        let server = try LocalWebServer(html: """
+            <html><body><p>alpha beta</p><p>Beta</p><div style="display: none">beta hidden</div></body></html>
+            """)
+        launchApp(sheets: [SeedSheet(name: "Web", pages: [
+            .text("notes.txt", "beta first"),
+            .text("site.webloc", server.weblocContents),
+        ])])
+        openOverlay("Web")
+        // The neighbor page loads in the background; search counts it once loaded.
+        search("beta", in: "Web")
+        let status = app.staticTexts["overlay.search.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        waitForText(status, "1 of 3", timeout: 10)
+
+        app.buttons["overlay.search.next"].click()
+        waitForState("next goes to the web page") { $0.session(named: "Web")?.pageIndex == 1 }
+        waitForText(status, "2 of 3")
+    }
+
+    @MainActor
+    func testSearchCurrentPageOnlyWhenSetInSettings() throws {
+        launchApp(sheets: [SeedSheet(name: "Notes", pages: [
+            .text("one.txt", "alpha beta"),
+            .text("two.txt", "gamma"),
+            .text("three.md", "# Beta\n\nbeta again"),
+        ])], defaults: ["searchScope": "currentPage"])
+        openOverlay("Notes")
+        search("beta", in: "Notes")
+        let status = app.staticTexts["overlay.search.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        waitForText(status, "1 of 1")
+        app.buttons["overlay.search.next"].click()
+        waitForText(status, "1 of 1")
+        XCTAssertEqual(requestState()?.session(named: "Notes")?.pageIndex, 0, "next stays on the page")
+
+        goToPage(1, of: "Notes")
+        waitForText(status, "No matches on this page")
+        goToPage(2, of: "Notes")
+        waitForText(status, "1 of 2")
+        app.buttons["overlay.search.next"].click()
+        waitForText(status, "2 of 2")
+    }
+
     @MainActor
     func testSearchFindsTextInsideImages() throws {
         launchApp(sheets: [SeedSheet(name: "Shots", pages: [

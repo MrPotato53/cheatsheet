@@ -25,7 +25,7 @@ struct MediaPageView: View {
         case .text:
             TextFileView(url: page.url, highlight: highlight, isInteractive: isInteractive)
         case .webpage:
-            WebPageView(fileURL: page.url, isInteractive: isInteractive, keepsLoaded: isLiveOverlay)
+            WebPageView(fileURL: page.url, isInteractive: isInteractive, keepsLoaded: isLiveOverlay, highlight: highlight)
         case .unsupported:
             ContentUnavailableView(
                 "Can't display \(page.url.lastPathComponent)",

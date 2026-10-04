@@ -69,13 +69,21 @@ nonisolated struct SearchMatches: Equatable {
 /// Case-insensitive text search over sheet pages. Text pages are matched on
 /// what the reader sees (rendered text for formatted markdown/HTML, source for
 /// raw), PDFs through PDFKit's text layer, images through on-device text
-/// recognition (ImageTextIndex).
+/// recognition (ImageTextIndex). Web pages are searched in their loaded page
+/// (LiveWebPage.matchCount).
 nonisolated enum PageSearch {
-    static func matchCounts(query: String, pages: [SheetPage]) async -> [Int] {
+    /// With `onlyPage`, every other page counts as match-less (and isn't read).
+    /// Web pages count 0 here: their text lives in the loaded page, which
+    /// the overlay counts itself.
+    static func matchCounts(query: String, pages: [SheetPage], onlyPage: Int? = nil) async -> [Int] {
         guard !query.isEmpty else { return pages.map { _ in 0 } }
         var pdfCounts: [URL: [Int: Int]] = [:]
         var counts: [Int] = []
-        for page in pages {
+        for (index, page) in pages.enumerated() {
+            if let onlyPage, index != onlyPage {
+                counts.append(0)
+                continue
+            }
             switch MediaKind.of(page.url) {
             case .pdf:
                 if pdfCounts[page.url] == nil {

@@ -238,6 +238,20 @@ struct PDFSearchTests {
         #expect(PageSearch.pdfSelections(query: "", url: url, pageIndex: 0).isEmpty)
     }
 
+    // "Search current page": other pages count as match-less.
+    @Test func countsOnlyTheGivenPage() async throws {
+        let url = try makePDF(pages: ["copy then paste copy", "nothing here", "Copy"])
+        defer { try? FileManager.default.removeItem(at: url) }
+        let pages = (0..<3).map { page(url, $0) }
+
+        #expect(await PageSearch.matchCounts(query: "copy", pages: pages, onlyPage: 2) == [0, 0, 1])
+        #expect(await PageSearch.matchCounts(query: "copy", pages: pages, onlyPage: 1) == [0, 0, 0])
+        // Stepping wraps within the page instead of leaving it.
+        let matches = SearchMatches(counts: [0, 0, 2])
+        #expect(matches.step(from: 1, pageIndex: 2, forward: true) == 0)
+        #expect(matches.location(of: 0)?.page == 2)
+    }
+
     /// Overwrites `url` in place with a new PDF, stamped a minute later so
     /// the edit is distinguishable regardless of timestamp resolution.
     private func editInPlace(_ url: URL, pages: [String]) throws {

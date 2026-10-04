@@ -452,20 +452,17 @@ final class OverlayController {
         endEditing(in: session)
         session.pageIndex = index
         updateFrame(for: session, animated: true)
+        searchPageChanged(in: session)
     }
 
     func goToNextPage(in session: OverlaySession) {
         guard session.pageIndex < session.pages.count - 1 else { return }
-        endEditing(in: session)
-        session.pageIndex += 1
-        updateFrame(for: session, animated: true)
+        goToPage(session.pageIndex + 1, in: session)
     }
 
     func goToPreviousPage(in session: OverlaySession) {
         guard session.pageIndex > 0 else { return }
-        endEditing(in: session)
-        session.pageIndex -= 1
-        updateFrame(for: session, animated: true)
+        goToPage(session.pageIndex - 1, in: session)
     }
 
     // MARK: - Live settings sync

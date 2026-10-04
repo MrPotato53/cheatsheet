@@ -19,6 +19,7 @@ struct GeneralSettingsView: View {
     @State private var previousSearchShortcut = KeyboardShortcuts.getShortcut(for: .openSearch)
     @Environment(CheatsheetStore.self) private var store
     @AppStorage(OverlayButtonsMode.defaultsKey, store: AppDefaults.store) private var overlayButtonsMode = OverlayButtonsMode.expanded
+    @AppStorage(SearchScope.defaultsKey, store: AppDefaults.store) private var searchScope = SearchScope.allPages
 
     var body: some View {
         Form {
@@ -107,6 +108,13 @@ struct GeneralSettingsView: View {
                 }
                 .accessibilityIdentifier("general.overlayButtonsMode")
                 .help("Collapsed buttons are grouped behind ☰ in the cheatsheet's corner")
+                Picker("Search", selection: $searchScope) {
+                    ForEach(SearchScope.allCases) { scope in
+                        Text(scope.label).tag(scope)
+                    }
+                }
+                .accessibilityIdentifier("general.searchScope")
+                .help("Which pages ⌘F finds matches on. Web pages are searched once they've been shown.")
                 Toggle("Close with Escape", isOn: $dismissWithEsc)
                     .accessibilityIdentifier("general.dismissWithEsc")
                 Toggle("Close when clicking outside it", isOn: $dismissOnClickOutside)

@@ -54,9 +54,9 @@ nonisolated enum MediaKind: Equatable {
         self == .markdown || self == .html
     }
 
-    /// Overlay search reads the app's copy of a page; a web page's content
-    /// lives on the server, so it isn't searched.
+    /// Overlay search reads the app's copy of a page; a web page is searched
+    /// in its loaded page instead (only once it has been shown).
     var isSearchable: Bool {
-        self != .unsupported && self != .webpage
+        self != .unsupported
     }
 }

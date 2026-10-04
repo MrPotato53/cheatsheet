@@ -65,6 +65,9 @@ struct OverlayContentView: View {
             controller.setTask(atLine: line, checked: checked, url: url, in: session)
         }
         .environment(\.isLiveOverlay, true)
+        .environment(\.webPageDidLoad) { [controller, session] in
+            controller.webPageDidLoad(in: session)
+        }
         .overlay(alignment: .bottom) {
             if session.pages.count > 1, session.editor == nil {
                 pageControls

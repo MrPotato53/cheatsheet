@@ -13,11 +13,20 @@ enum SearchHighlightColors {
 /// scripts, styles, SVG and mermaid diagrams is skipped.
 nonisolated enum WebSearchHighlighter {
     static func script(for highlight: SearchHighlight?) -> String {
-        let query = highlight?.query ?? ""
+        script(query: highlight?.query ?? "", active: highlight?.activeIndex, marks: true)
+    }
+
+    /// Removes any marks and returns how many matches `script` would mark,
+    /// without marking them.
+    static func countScript(for query: String) -> String {
+        script(query: query, active: nil, marks: false)
+    }
+
+    private static func script(query: String, active: Int?, marks shouldMark: Bool) -> String {
         let encoded = (try? JSONEncoder().encode(query)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
-        let active = highlight?.activeIndex.map(String.init) ?? "-1"
+        let active = active.map(String.init) ?? "-1"
         return """
-        (function (query, active) {
+        (function (query, active, shouldMark) {
           document.querySelectorAll('mark[data-cheatsheet-find]').forEach(function (mark) {
             var parent = mark.parentNode;
             parent.replaceChild(document.createTextNode(mark.textContent), mark);
@@ -29,11 +38,21 @@ nonisolated enum WebSearchHighlighter {
             acceptNode: function (node) {
               var el = node.parentElement;
               if (!el || el.closest('script, style, noscript, svg, .mermaid')) return NodeFilter.FILTER_REJECT;
+              // Not rendered (display: none), e.g. a web page's closed menus.
+              if (!el.getClientRects().length) return NodeFilter.FILTER_REJECT;
               return NodeFilter.FILTER_ACCEPT;
             }
           });
           var nodes = [];
           while (walker.nextNode()) nodes.push(walker.currentNode);
+          if (!shouldMark) {
+            var count = 0;
+            nodes.forEach(function (node) {
+              var text = node.nodeValue.toLowerCase();
+              for (var at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length)) count++;
+            });
+            return count;
+          }
           var marks = [];
           nodes.forEach(function (node) {
             var current = node;
@@ -57,7 +76,7 @@ nonisolated enum WebSearchHighlighter {
             marks[Math.min(active, marks.length - 1)].scrollIntoView({ block: 'center' });
           }
           return marks.length;
-        })(\(encoded), \(active));
+        })(\(encoded), \(active), \(shouldMark));
         """
     }
 }

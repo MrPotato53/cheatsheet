@@ -529,7 +529,7 @@ struct WebLocationTests {
         try WebLocation.fileData(for: url).write(to: file)
         #expect(WebLocation.url(fromFileAt: file) == url)
         #expect(MediaKind.of(file) == .webpage)
-        #expect(!MediaKind.webpage.isSearchable)
+        #expect(MediaKind.webpage.isSearchable)
         #expect(!MediaKind.webpage.hasRawView)
         // A .webloc can hold any URL; only web pages are shown.
         let mail = try PropertyListSerialization.data(fromPropertyList: ["URL": "mailto:a@b.c"], format: .xml, options: 0)

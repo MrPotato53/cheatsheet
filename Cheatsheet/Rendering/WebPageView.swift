@@ -6,6 +6,9 @@ extension EnvironmentValues {
     /// True inside an overlay, false in settings previews: overlay web
     /// pages stay loaded between opens and get navigation controls.
     @Entry var isLiveOverlay = false
+    /// Called when a shown web page finishes loading (a new document), so
+    /// an open search can recount it.
+    @Entry var webPageDidLoad: (@MainActor () -> Void)?
 }
 
 /// A `.webloc` page: the live web page it points at.
@@ -15,13 +18,17 @@ struct WebPageView: View {
     /// Overlay pages come from LiveWebPages and survive closing; preview
     /// pages are private to this view.
     var keepsLoaded = false
+    /// Search matches to mark in the page, if a search is active.
+    var highlight: SearchHighlight?
     @State private var page: LiveWebPage?
     @State private var isHovering = false
+    @Environment(\.webPageDidLoad) private var webPageDidLoad
 
-    init(fileURL: URL, isInteractive: Bool = true, keepsLoaded: Bool = false) {
+    init(fileURL: URL, isInteractive: Bool = true, keepsLoaded: Bool = false, highlight: SearchHighlight? = nil) {
         self.fileURL = fileURL
         self.isInteractive = isInteractive
         self.keepsLoaded = keepsLoaded
+        self.highlight = highlight
         // Cheap: the page's web view is only made once it's displayed.
         let address = WebLocation.url(fromFileAt: fileURL)
         _page = State(initialValue: address.map { address in
@@ -48,6 +55,8 @@ struct WebPageView: View {
                 }
             }
             .onHover { isHovering = $0 }
+            .onChange(of: highlight, initial: true) { page.setHighlight(highlight) }
+            .onChange(of: page.loadCount) { webPageDidLoad?() }
         } else {
             ContentUnavailableView(
                 "Can't read this web page's address",
