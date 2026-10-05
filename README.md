@@ -25,23 +25,24 @@ and dismiss.
   cheatsheet. Pin one to keep it open while you work, or let it close when
   you click away or press Escape.
 
-## Requirements
-
-- macOS 26 or later
-- To build: Xcode 26
-
 ## Install
 
-There are no prebuilt releases yet, so build it from source:
+Requires macOS 26 or later.
 
-1. Clone this repository and open `Cheatsheet.xcodeproj` in Xcode.
-2. Select the **Cheatsheet** target, then **Signing & Capabilities**, and
-   choose your own team (a free Apple ID works).
-3. Run it (⌘R), or build a release copy with `./build.sh`, which produces
-   `build/Build/Products/Release/Cheatsheet.app`. Move that app to
-   `/Applications`.
+1. Download **Cheatsheet-x.y.z.zip** from the
+   [latest release](https://github.com/MrPotato53/cheatsheet/releases/latest)
+   and unzip it.
+2. Move **Cheatsheet.app** to your Applications folder and open it.
+3. The first time, macOS says it can't check the app for malicious software.
+   That's because it isn't notarized by Apple (which needs a paid developer
+   account), not because anything is wrong. Open **System Settings → Privacy
+   & Security**, scroll down, and click **Open Anyway** next to Cheatsheet.
+   You only do this once.
 
 Cheatsheet lives in the menu bar; it has no Dock icon unless you turn one on.
+To update, download the newer release and replace the app; your cheatsheets
+and settings stay. If macOS asks whether Cheatsheet may access its data,
+allow it.
 
 ## Getting started
 
@@ -83,11 +84,21 @@ Settings, then **Import Cheatsheets…** on the other Mac.
 
 ## Development
 
+Building needs Xcode 26. Open `Cheatsheet.xcodeproj`, choose your own team
+under the **Cheatsheet** target's **Signing & Capabilities** (a free Apple ID
+works), and run (⌘R).
+
 ```sh
-./test.sh        # unit tests (fast; also run by the pre-commit hook)
-./test.sh full   # unit + UI tests (drives the real app; don't use the Mac meanwhile)
-./build.sh       # release build, zipped as Cheatsheet.zip
+./test.sh                    # unit tests (fast; also run by the pre-commit hook)
+./test.sh full               # unit + UI tests (drives the real app; don't use the Mac meanwhile)
+./build.sh                   # local release build, zipped as Cheatsheet.zip
+./release.sh 1.0.0           # build the release zip (dry run)
+./release.sh 1.0.0 --publish # tag v1.0.0 and publish it on GitHub (needs gh)
 ```
+
+To release, set the version (**General → Identity → Version** on the target,
+i.e. `MARKETING_VERSION`), commit and push, then run `release.sh` with that
+version. Releases are ad-hoc signed and not notarized.
 
 Enable the pre-commit hook with `git config core.hooksPath .githooks`.
 See [docs/ui-testing.md](docs/ui-testing.md) for how the UI tests work and
