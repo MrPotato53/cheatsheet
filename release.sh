@@ -5,6 +5,9 @@
 #   ./release.sh 1.0.0             # build and check the zip, publish nothing
 #   ./release.sh 1.0.0 --publish   # also tag v1.0.0 and create the GitHub release
 #
+# RELEASE_NOTES=path/to/notes.md puts that file's "what's new" above the
+# install steps in the release description.
+#
 # The version must match MARKETING_VERSION in the Xcode project (bump it there
 # first). Releases are ad-hoc signed: they carry no developer identity, and
 # since they aren't notarized, users approve the app once in
@@ -30,6 +33,10 @@ PROJECT_VERSION=$(xcodebuild -project Cheatsheet.xcodeproj -target Cheatsheet -c
 # "1.0" in the project matches "1.0" or "1.0.0" here.
 [[ "$VERSION" == "$PROJECT_VERSION" || "$VERSION" == "$PROJECT_VERSION.0" ]] \
   || fail "version $VERSION doesn't match the app's version ($PROJECT_VERSION); set MARKETING_VERSION first"
+
+if [[ -n "${RELEASE_NOTES:-}" ]]; then
+  [[ -s "$RELEASE_NOTES" ]] || fail "release notes file $RELEASE_NOTES is missing or empty"
+fi
 
 if $PUBLISH; then
   command -v gh >/dev/null || fail "GitHub CLI not found: brew install gh, then gh auth login"
@@ -71,7 +78,10 @@ if ! $PUBLISH; then
   exit 0
 fi
 
-NOTES=$(cat <<EOF
+WHATS_NEW=""
+[[ -n "${RELEASE_NOTES:-}" ]] && WHATS_NEW="$(cat "$RELEASE_NOTES")"$'\n\n'
+
+NOTES=$WHATS_NEW$(cat <<EOF
 ## Install
 
 1. Download **Cheatsheet-$VERSION.zip** below and unzip it.
