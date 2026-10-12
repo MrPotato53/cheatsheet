@@ -19,6 +19,9 @@ final class OverlayPanel: NSPanel {
     /// User resizes start with the mouse button down; programmatic snap
     /// animations start from a task that waits for button release first.
     var liveResizeStartedWithButtonDown = false
+    /// Modifiers of the hold-to-show shortcut keeping this overlay open:
+    /// held for that, not meant for scrolling.
+    var heldShortcutModifiers: NSEvent.ModifierFlags = []
 
     /// Views whose area shows a custom cursor (see PointingHandCursor.swift).
     let cursorRegions = NSHashTable<NSView>.weakObjects()
@@ -53,15 +56,24 @@ final class OverlayPanel: NSPanel {
         if event.type == .keyDown, keyHandler?(event) == true { return }
         // In hold-to-show mode the hotkey's modifiers stay pressed; shift turns
         // wheel scrolls horizontal and command triggers zoom behaviors, which
-        // made scrolling appear broken. The overlay never needs modified
-        // scrolling, so strip modifiers and scroll the view under the cursor
-        // ourselves.
-        if event.type == .scrollWheel,
-           !event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty,
-           deliverUnmodifiedScroll(event) {
-            return
+        // made scrolling appear broken. The overlay needs no modified
+        // scrolling except shift-to-scroll-sideways, so other modifiers are
+        // stripped and the view under the cursor scrolled by us.
+        if event.type == .scrollWheel {
+            let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+            let scrollsSideways = Self.scrollsSideways(modifiers: modifiers, heldForShortcut: heldShortcutModifiers)
+            let stuck = scrollsSideways ? modifiers.subtracting(.shift) : modifiers
+            if !stuck.isEmpty, deliverUnmodifiedScroll(event, sideways: scrollsSideways) {
+                return
+            }
         }
         super.sendEvent(event)
+    }
+
+    /// Shift scrolls sideways (as everywhere in macOS), unless it's held as
+    /// part of the hold-to-show shortcut.
+    static func scrollsSideways(modifiers: NSEvent.ModifierFlags, heldForShortcut: NSEvent.ModifierFlags) -> Bool {
+        modifiers.contains(.shift) && !heldForShortcut.contains(.shift)
     }
 
     /// ⌘X/C/V/A/Z in the editor, search field and web pages (see
@@ -85,7 +97,7 @@ final class OverlayPanel: NSPanel {
         return false
     }
 
-    private func deliverUnmodifiedScroll(_ event: NSEvent) -> Bool {
+    private func deliverUnmodifiedScroll(_ event: NSEvent, sideways: Bool) -> Bool {
         guard let contentView else { return false }
         // hitTest takes superview coordinates (the frame view is flipped, so
         // raw locationInWindow lands on the wrong subview — convert properly).
@@ -93,7 +105,7 @@ final class OverlayPanel: NSPanel {
             ?? event.locationInWindow
         let hit = contentView.hitTest(point) ?? contentView
 
-        let (dx, dy) = Self.correctedDeltas(for: event)
+        let (dx, dy) = sideways ? (event.scrollingDeltaX, event.scrollingDeltaY) : Self.correctedDeltas(for: event)
 
         // Redelivering a synthesized NSEvent doesn't drive modern AppKit
         // scrolling, so scroll the clip view directly with the real deltas.

@@ -4,11 +4,15 @@ import WebKit
 
 extension EnvironmentValues {
     /// True inside an overlay, false in settings previews: overlay web
-    /// pages stay loaded between opens and get navigation controls.
+    /// pages stay loaded between opens (their navigation buttons are in
+    /// OverlayToolbar).
     @Entry var isLiveOverlay = false
     /// Called when a shown web page finishes loading (a new document), so
     /// an open search can recount it.
     @Entry var webPageDidLoad: (@MainActor () -> Void)?
+    /// Called for ←/→ a clicked-into web page didn't use (WebArrowKeys):
+    /// true for the next cheatsheet page.
+    @Entry var webPageUnusedArrowKey: (@MainActor (_ forward: Bool) -> Void)?
 }
 
 /// A `.webloc` page: the live web page it points at.
@@ -21,8 +25,8 @@ struct WebPageView: View {
     /// Search matches to mark in the page, if a search is active.
     var highlight: SearchHighlight?
     @State private var page: LiveWebPage?
-    @State private var isHovering = false
     @Environment(\.webPageDidLoad) private var webPageDidLoad
+    @Environment(\.webPageUnusedArrowKey) private var webPageUnusedArrowKey
 
     init(fileURL: URL, isInteractive: Bool = true, keepsLoaded: Bool = false, highlight: SearchHighlight? = nil) {
         self.fileURL = fileURL
@@ -49,14 +53,11 @@ struct WebPageView: View {
                         .controlSize(.large)
                 }
             }
-            .overlay(alignment: .topLeading) {
-                if keepsLoaded, isInteractive {
-                    navigationControls(page)
-                }
-            }
-            .onHover { isHovering = $0 }
             .onChange(of: highlight, initial: true) { page.setHighlight(highlight) }
             .onChange(of: page.loadCount) { webPageDidLoad?() }
+            .onAppear {
+                if keepsLoaded { page.onUnusedArrowKey = webPageUnusedArrowKey }
+            }
         } else {
             ContentUnavailableView(
                 "Can't read this web page's address",
@@ -64,30 +65,6 @@ struct WebPageView: View {
                 description: Text("Remove it and add the page again.")
             )
         }
-    }
-
-    /// Faded until hovered, like the overlay's other controls.
-    private func navigationControls(_ page: LiveWebPage) -> some View {
-        HStack(spacing: 6) {
-            control("chevron.backward", help: "Back", id: "overlay.web.back", action: page.goBack)
-                .disabled(!page.canGoBack)
-            control("arrow.clockwise", help: "Reload", id: "overlay.web.reload", action: page.reload)
-            control("safari", help: "Open in browser", id: "overlay.web.openInBrowser", action: page.openInBrowser)
-        }
-        .padding(8)
-        .opacity(isHovering ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: isHovering)
-    }
-
-    private func control(_ systemImage: String, help: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .frame(width: 18, height: 18)
-        }
-        .overlayControl()
-        .accessibilityIdentifier(id)
-        .circleChrome()
-        .help(help)
     }
 
     private func failureView(_ failure: String, page: LiveWebPage) -> some View {
@@ -120,6 +97,7 @@ private struct WebPageRepresentable: NSViewRepresentable {
         // Preloaded neighbor pages are hidden outright (as with markdown):
         // their tracking areas must not set the visible page's cursor.
         webView.isHidden = !isInteractive
+        webView.applyZoom(context.environment.pageZoom)
         if !isInteractive {
             page.pauseMedia()
         }

@@ -61,13 +61,15 @@ These work while a cheatsheet is open:
 
 | Keys | Does |
 | --- | --- |
-| ← → | Previous / next page |
-| ⌘F | Search the cheatsheet (Return or ⌘G for the next match) |
+| ← → | Previous / next page (in a web page you've clicked into, only if the site doesn't use the arrows itself) |
+| ⌘F | Search the cheatsheet (Return or ⌘G for the next match); while editing, searches the text you're editing |
 | ⌘E | Edit the page (text, markdown, and HTML) |
+| ⌘= ⌘- ⌘0 | Zoom in, zoom out, back to 100% (Settings can remember each cheatsheet's zoom) |
 | ⇧⌘P | Pin or unpin, so it stays open |
 | Escape | Close search, finish editing, or close the cheatsheet |
 
-All shortcuts can be changed in Settings.
+The pin shortcut, like the shortcuts that open cheatsheets, can be changed
+in Settings.
 
 ## Your files
 

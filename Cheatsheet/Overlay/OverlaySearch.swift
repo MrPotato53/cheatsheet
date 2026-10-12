@@ -36,8 +36,9 @@ nonisolated struct OverlaySearchState: Equatable {
 extension OverlayController {
     private static let searchDebounce: Duration = .milliseconds(120)
 
+    /// While editing, the search covers the text being edited (raw source)
+    /// and editing carries on.
     func openSearch(in session: OverlaySession) {
-        endEditing(in: session)
         session.search.isActive = true
         session.search.focusRequest += 1
         session.panel.makeKey()
@@ -47,6 +48,15 @@ extension OverlayController {
     func closeSearch(in session: OverlaySession) {
         session.searchTask?.cancel()
         session.search = OverlaySearchState()
+        // Back to typing where editing left off.
+        session.editor?.focusRequest += 1
+    }
+
+    /// The searched text changed (edited, or editing began/ended): recount
+    /// without jumping away from the current match.
+    func refreshSearch(in session: OverlaySession) {
+        guard session.search.isActive else { return }
+        runSearch(in: session, jumpToFirst: false)
     }
 
     func setSearchQuery(_ query: String, in session: OverlaySession) {
@@ -91,7 +101,9 @@ extension OverlayController {
             return
         }
         let pages = session.pages
-        let onlyPage = SearchScope.current == .currentPage ? session.pageIndex : nil
+        let editedText = session.editor?.text
+        // Editing confines the search to the edited page.
+        let onlyPage = editedText != nil || SearchScope.current == .currentPage ? session.pageIndex : nil
         session.searchTask = Task { [weak self, weak session] in
             try? await Task.sleep(for: Self.searchDebounce)
             guard !Task.isCancelled else { return }
@@ -101,10 +113,7 @@ extension OverlayController {
                 try? await Task.sleep(for: .milliseconds(300))
                 if !Task.isCancelled { session?.search.isSearching = true }
             }
-            var counts = await Task.detached(priority: .userInitiated) {
-                await PageSearch.matchCounts(query: query, pages: pages, onlyPage: onlyPage)
-            }.value
-            counts = await Self.addingWebPageCounts(to: counts, query: query, pages: pages, onlyPage: onlyPage)
+            let counts = await Self.matchCounts(query: query, pages: pages, onlyPage: onlyPage, editedText: editedText)
             indicator.cancel()
             session?.search.isSearching = false
             guard !Task.isCancelled, let self, let session, session.search.query == query else { return }
@@ -121,6 +130,18 @@ extension OverlayController {
                 self.goToPage(location.page, in: session)
             }
         }
+    }
+
+    private static func matchCounts(query: String, pages: [SheetPage], onlyPage: Int?, editedText: String?) async -> [Int] {
+        if let editedText, let onlyPage {
+            var counts = Array(repeating: 0, count: pages.count)
+            counts[onlyPage] = PageSearch.ranges(of: query, in: editedText).count
+            return counts
+        }
+        let counts = await Task.detached(priority: .userInitiated) {
+            await PageSearch.matchCounts(query: query, pages: pages, onlyPage: onlyPage)
+        }.value
+        return await addingWebPageCounts(to: counts, query: query, pages: pages, onlyPage: onlyPage)
     }
 
     /// Web pages are searched only once loaded (a page never shown isn't
@@ -160,7 +181,10 @@ extension OverlayController {
         case 53: // escape closes the search before it would close the overlay
             closeSearch(in: session)
             return true
-        case 36, 76: // return / enter
+        case 36, 76: // return / enter: next match, unless typing in the editor
+            if session.editor != nil, !isEditingSearchField(in: session) {
+                return false
+            }
             stepSearch(in: session, forward: !flags.contains(.shift))
             return true
         case 123, 124: // arrows move the caret while typing a query

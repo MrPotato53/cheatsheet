@@ -20,6 +20,7 @@ struct GeneralSettingsView: View {
     @Environment(CheatsheetStore.self) private var store
     @AppStorage(OverlayButtonsMode.defaultsKey, store: AppDefaults.store) private var overlayButtonsMode = OverlayButtonsMode.expanded
     @AppStorage(SearchScope.defaultsKey, store: AppDefaults.store) private var searchScope = SearchScope.allPages
+    @AppStorage(ZoomMemory.enabledKey, store: AppDefaults.store) private var remembersZoom = false
 
     var body: some View {
         Form {
@@ -115,6 +116,12 @@ struct GeneralSettingsView: View {
                 }
                 .accessibilityIdentifier("general.searchScope")
                 .help("Which pages ⌘F finds matches on. Web pages are searched once they've been shown.")
+                Toggle("Remember zoom level", isOn: $remembersZoom)
+                    .accessibilityIdentifier("general.remembersZoom")
+                    .help("Each cheatsheet reopens at the zoom it was left at (⌘= / ⌘- / ⌘0). Off: every open starts at 100%.")
+                    .onChange(of: remembersZoom) { _, isOn in
+                        if !isOn { ZoomMemory.forgetAll() }
+                    }
                 Toggle("Close with Escape", isOn: $dismissWithEsc)
                     .accessibilityIdentifier("general.dismissWithEsc")
                 Toggle("Close when clicking outside it", isOn: $dismissOnClickOutside)

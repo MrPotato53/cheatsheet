@@ -351,6 +351,8 @@ final class AppModel {
                 "isPinned": session.isPinned,
                 "isLoading": session.isLoadingPages,
                 "isEditingSearch": overlay.isEditingSearchField(in: session),
+                "isEditing": session.editor != nil,
+                "zoom": session.zoom,
                 "isVisible": session.panel.isVisible,
                 "isKey": session.panel.isKeyWindow,
                 "isMovable": session.panel.isMovableByWindowBackground,

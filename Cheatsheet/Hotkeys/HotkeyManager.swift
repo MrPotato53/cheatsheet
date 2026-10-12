@@ -141,7 +141,10 @@ final class HotkeyManager {
         else { return }
         switch sheet.activation {
         case .toggle: overlay.toggle(sheet)
-        case .hold: overlay.show(sheet)
+        case .hold:
+            overlay.show(sheet)
+            let modifiers = KeyboardShortcuts.getShortcut(for: sheet.shortcutName)?.modifiers ?? []
+            overlay.holdKeyDown(sheetID: sheetID, modifiers: modifiers)
         }
     }
 

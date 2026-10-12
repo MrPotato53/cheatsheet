@@ -81,6 +81,7 @@ final class OverlayUITests: CheatsheetUITestCase {
     private func waitForText(
         _ element: XCUIElement,
         _ text: String,
+        _ message: String = "",
         timeout: TimeInterval = 5,
         file: StaticString = #filePath,
         line: UInt = #line
@@ -88,7 +89,85 @@ final class OverlayUITests: CheatsheetUITestCase {
         let predicate = NSPredicate(format: "value == %@", text)
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
         let result = XCTWaiter().wait(for: [expectation], timeout: timeout)
-        XCTAssertEqual(result, .completed, "expected '\(text)', got '\(element.value ?? "nil")'", file: file, line: line)
+        XCTAssertEqual(result, .completed, "expected '\(text)', got '\(element.value ?? "nil")' \(message)", file: file, line: line)
+    }
+
+    @MainActor
+    func testSearchWhileEditingKeepsEditingAndSearchesSource() throws {
+        launchApp(sheets: [SeedSheet(name: "Notes", pages: [
+            .text("one.md", "# Beta\n\nbeta and **beta**"),
+            .text("two.txt", "beta"),
+        ])])
+        openOverlay("Notes")
+        app.typeKey("e", modifierFlags: .command)
+        waitForState("editing") { $0.session(named: "Notes")?.isEditing == true }
+
+        app.typeKey("f", modifierFlags: .command)
+        let field = app.textFields["overlay.search.field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "⌘F opens search while editing")
+        waitForState("search field focused") { $0.session(named: "Notes")?.isEditingSearch == true }
+        for character in "beta" {
+            app.typeKey(String(character), modifierFlags: [])
+        }
+        let status = app.staticTexts["overlay.search.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        waitForText(status, "1 of 3", "counts the edited page's source only")
+        app.typeKey(.return, modifierFlags: [])
+        waitForText(status, "2 of 3")
+        let session = requestState()?.session(named: "Notes")
+        XCTAssertEqual(session?.isEditing, true, "searching doesn't end editing")
+        XCTAssertEqual(session?.pageIndex, 0)
+
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5), "escape closes the search first")
+        XCTAssertEqual(requestState()?.session(named: "Notes")?.isEditing, true, "still editing")
+        app.typeKey(.escape, modifierFlags: [])
+        waitForState("second escape finishes editing") { $0.session(named: "Notes")?.isEditing == false }
+    }
+
+    @MainActor
+    func testArrowsStillPageAfterSelectingText() throws {
+        let html = "<html><body style='font-size:40px'><p>select some of this text please</p><p>and some more text to select</p></body></html>"
+        let words = String(repeating: "select some of this text please and more ", count: 20)
+        launchApp(sheets: [SeedSheet(name: "Docs", pages: [
+            .text("page.html", html),
+            .text("notes.md", words),
+            .text("plain.txt", words),
+            .text("end.txt", "end"),
+        ])])
+        openOverlay("Docs")
+        let content = overlayContent()
+        for page in 0..<3 {
+            // A real drag inside the page (away from its edges): selecting text.
+            let start = content.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.25))
+            start.press(forDuration: 0.2, thenDragTo: content.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.35)))
+            app.typeKey(.rightArrow, modifierFlags: [])
+            waitForState("→ still pages after selecting text on page \(page + 1)") { $0.session(named: "Docs")?.pageIndex == page + 1 }
+        }
+    }
+
+    @MainActor
+    func testZoomKeysStepFlashTheLevelAndReset() throws {
+        launchApp(sheets: [SeedSheet(name: "Notes", pages: [.text("notes.txt", "remember the milk")])])
+        openOverlay("Notes")
+
+        // The badge shows briefly, then fades out of the accessibility tree:
+        // checked right after each press, the zoom itself through state.
+        let badge = app.staticTexts["overlay.zoomLevel"]
+        app.typeKey("=", modifierFlags: .command)
+        waitForText(badge, "110%", "flashed after ⌘=", timeout: 1.2)
+        waitForState("⌘= zooms in 10%") { abs(($0.session(named: "Notes")?.zoom ?? 0) - 1.1) < 0.001 }
+        app.typeKey("-", modifierFlags: .command)
+        app.typeKey("-", modifierFlags: .command)
+        waitForText(badge, "90%", "flashed after ⌘-", timeout: 1.2)
+        waitForState("⌘- zooms out 10% a step") { abs(($0.session(named: "Notes")?.zoom ?? 0) - 0.9) < 0.001 }
+        app.typeKey("0", modifierFlags: .command)
+        waitForState("⌘0 resets") { $0.session(named: "Notes")?.zoom == 1 }
+
+        app.typeKey("=", modifierFlags: .command)
+        hideAllOverlays()
+        openOverlay("Notes")
+        XCTAssertEqual(requestState()?.session(named: "Notes")?.zoom, 1, "not remembered unless the setting is on")
     }
 
     @MainActor
@@ -128,6 +207,46 @@ final class OverlayUITests: CheatsheetUITestCase {
         app.buttons["overlay.search.next"].click()
         waitForState("next goes to the web page") { $0.session(named: "Web")?.pageIndex == 1 }
         waitForText(status, "2 of 3")
+    }
+
+    /// ←/→ in a clicked-into web page go to the site first: a site that
+    /// uses them keeps them, otherwise they still switch pages.
+    @MainActor
+    func testArrowsInWebPagesPageUnlessTheSiteUsesThem() throws {
+        let plainSite = try LocalWebServer(html: "<html><body style='font-size:40px'><p>no key handling here</p></body></html>")
+        let arrowSite = try LocalWebServer(html: """
+            <html><body style='font-size:40px'><p id='count'>0</p><script>
+            window.addEventListener('keydown', e => {
+              if (!e.key.startsWith('Arrow')) return;
+              e.preventDefault();
+              count.textContent = Number(count.textContent) + 1;
+              history.replaceState(null, '', '#' + count.textContent);
+            });
+            </script></body></html>
+            """)
+        launchApp(sheets: [SeedSheet(name: "Web", pages: [
+            .text("first.txt", "first"),
+            .text("plain.webloc", plainSite.weblocContents),
+            .text("arrows.webloc", arrowSite.weblocContents),
+            .text("last.txt", "last"),
+        ])])
+        openOverlay("Web")
+        let content = overlayContent()
+
+        goToPage(1, of: "Web")
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 2)) // let the page load
+        content.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        app.typeKey(.rightArrow, modifierFlags: [])
+        waitForState("a site that doesn't use → lets it page") { $0.session(named: "Web")?.pageIndex == 2 }
+
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 2))
+        content.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        app.typeKey(.rightArrow, modifierFlags: [])
+        waitForState("the site got the key") { state in
+            state.liveWebPages.contains { $0.currentURL.hasSuffix("#1") }
+        }
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
+        XCTAssertEqual(requestState()?.session(named: "Web")?.pageIndex, 2, "a site that uses → keeps it")
     }
 
     @MainActor

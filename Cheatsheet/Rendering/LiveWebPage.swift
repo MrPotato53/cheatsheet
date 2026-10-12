@@ -33,6 +33,8 @@ final class LiveWebPage {
     @ObservationIgnored private var backObservation: NSKeyValueObservation?
     /// What a Retry should load: the page that failed, not the start page.
     @ObservationIgnored private var failedURL: URL?
+    /// ←/→ the site didn't use (see WebArrowKeys): true for next page.
+    @ObservationIgnored var onUnusedArrowKey: ((_ forward: Bool) -> Void)?
 
     init(address: URL) {
         self.address = address
@@ -44,8 +46,10 @@ final class LiveWebPage {
         if let storedWebView {
             return storedWebView
         }
-        let webView = MarkdownWebView.OverlayAwareWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let configuration = WKWebViewConfiguration()
         let navigator = Navigator(page: self)
+        WebArrowKeys.install(in: configuration.userContentController, handler: navigator)
+        let webView = MarkdownWebView.OverlayAwareWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = navigator
         webView.uiDelegate = navigator
         webView.allowsMagnification = true
@@ -146,11 +150,16 @@ final class LiveWebPage {
     /// Link routing: same-site pages stay here, other sites, new windows
     /// and downloads go to the user's browser. Only clicks are routed, so
     /// redirects (sign-in flows included) are left alone.
-    private final class Navigator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    private final class Navigator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         weak var page: LiveWebPage?
 
         init(page: LiveWebPage) {
             self.page = page
+        }
+
+        func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == WebArrowKeys.messageName, let forward = WebArrowKeys.isForward(message.body) else { return }
+            page?.onUnusedArrowKey?(forward)
         }
 
         func webView(

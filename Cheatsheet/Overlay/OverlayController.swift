@@ -34,6 +34,10 @@ final class OverlaySession: Identifiable {
     /// Bumped when files change under mounted pages (a copy refreshed from
     /// its original, an edit finished): pages remount and re-read them.
     var contentRevision = 0
+    /// Page zoom (1 = 100%), for every page of the sheet.
+    var zoom = PageZoom.actualSize
+    /// Bumped on each zoom change to flash the zoom level.
+    var zoomFlash = 0
 
     @ObservationIgnored let panel = OverlayPanel()
     @ObservationIgnored var screen: NSScreen?
@@ -209,6 +213,7 @@ final class OverlayController {
 
         let session = OverlaySession(sheet: sheet)
         session.isLoadingPages = true
+        session.zoom = ZoomMemory.zoom(for: sheet.id)
         #if DEBUG
         WebRevealTiming.overlayOpened()
         #endif
@@ -402,8 +407,16 @@ final class OverlayController {
         }
     }
 
+    /// The hold-to-show shortcut's modifiers stay pressed while it's held.
+    func holdKeyDown(sheetID: Cheatsheet.ID, modifiers: NSEvent.ModifierFlags) {
+        session(for: sheetID)?.panel.heldShortcutModifiers = modifiers
+    }
+
     func handleHoldKeyUp(sheetID: Cheatsheet.ID) {
-        guard let session = session(for: sheetID), !session.isPinned else { return }
+        guard let session = session(for: sheetID) else { return }
+        // Released: a pinned overlay stays, and shift is shift again.
+        session.panel.heldShortcutModifiers = []
+        guard !session.isPinned else { return }
         hide(session)
     }
 
@@ -800,15 +813,23 @@ final class OverlayController {
     // MARK: - Keys
 
     private func handleKeyEvent(_ event: NSEvent, in session: OverlaySession) -> Bool {
+        if handleZoomKeyEvent(event, in: session) {
+            return true
+        }
         if let handled = handleEditorKeyEvent(event, in: session) {
             return handled
         }
         if let handled = handleSearchKeyEvent(event, in: session) {
             return handled
         }
-        // A clicked-into web page gets its arrow keys (text fields, sliders,
-        // scrolling); the page buttons still switch pages.
+        // A clicked-into web page gets its arrow keys first; ones it doesn't
+        // use come back to switch pages (WebArrowKeys).
         let isArrow = event.keyCode == 123 || event.keyCode == 124
+        // Shift-arrows extend a text selection, as anywhere; plain arrows page.
+        if isArrow, event.modifierFlags.contains(.shift),
+           session.panel.firstResponder is NSTextView || session.panel.isWebViewFocused {
+            return false
+        }
         if isArrow, session.panel.isWebViewFocused,
            let page = session.currentPage, MediaKind.of(page.url) == .webpage {
             return false

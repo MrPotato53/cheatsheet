@@ -50,6 +50,13 @@ struct MarkdownWebView: NSViewRepresentable {
             super.viewDidMoveToWindow()
             trackingFilters += filterMouseTrackingForOverlayCursorRegions()
         }
+
+        /// The overlay's zoom, as WebKit page zoom (relayout, like a browser).
+        func applyZoom(_ zoom: Double) {
+            if pageZoom != zoom {
+                pageZoom = zoom
+            }
+        }
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
@@ -246,6 +253,7 @@ struct MarkdownWebView: NSViewRepresentable {
         // tracking areas are inactive, so WebKit can't apply the neighbor
         // page's cursor over the page actually on screen.
         webView.isHidden = !isInteractive
+        webView.applyZoom(context.environment.pageZoom)
         let coordinator = context.coordinator
         coordinator.url = url
         coordinator.taskHandler = context.environment.markdownTaskHandler

@@ -65,8 +65,18 @@ struct OverlayContentView: View {
             controller.setTask(atLine: line, checked: checked, url: url, in: session)
         }
         .environment(\.isLiveOverlay, true)
+        .environment(\.pageZoom, session.zoom)
         .environment(\.webPageDidLoad) { [controller, session] in
             controller.webPageDidLoad(in: session)
+        }
+        // Weak: the kept web page outlives this overlay.
+        .environment(\.webPageUnusedArrowKey) { [weak controller, weak session] forward in
+            guard let controller, let session else { return }
+            if forward {
+                controller.goToNextPage(in: session)
+            } else {
+                controller.goToPreviousPage(in: session)
+            }
         }
         .overlay(alignment: .bottom) {
             if session.pages.count > 1, session.editor == nil {
@@ -87,7 +97,18 @@ struct OverlayContentView: View {
             reviewBanner
         }
         .overlay(alignment: .topTrailing) {
-            OverlayToolbar(session: session, controller: controller, isOverlayHovered: isHovering)
+            // Below the drag strip, so the buttons never cover the grab area.
+            VStack(alignment: .trailing, spacing: 0) {
+                OverlayToolbar(session: session, controller: controller, isOverlayHovered: isHovering)
+                ZoomLevelBadge(zoom: session.zoom, flash: session.zoomFlash)
+            }
+            .padding(.top, hasDragStrip ? Self.dragStripHeight : 0)
+        }
+        .overlay(alignment: .topLeading) {
+            if let livePage = currentLiveWebPage {
+                WebNavigationControls(page: livePage, isOverlayHovered: isHovering)
+                    .padding(.top, hasDragStrip ? Self.dragStripHeight : 0)
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
@@ -97,6 +118,15 @@ struct OverlayContentView: View {
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("overlay.root")
+    }
+
+    /// The kept web page shown on a `.webloc` page, for its navigation buttons.
+    private var currentLiveWebPage: LiveWebPage? {
+        guard !session.isLoadingPages, let page = session.currentPage,
+              MediaKind.of(page.url) == .webpage,
+              let address = WebLocation.url(fromFileAt: page.url)
+        else { return nil }
+        return LiveWebPages.page(forFile: page.url, address: address)
     }
 
     /// Remounts a page when its file changed underneath it.
@@ -110,7 +140,11 @@ struct OverlayContentView: View {
         let page = session.pages[index]
         if index == session.pageIndex, let editor = session.editor {
             // Edited untransformed: rotated or mirrored text isn't editable.
-            OverlayTextEditor(initialText: editor.text) { text in
+            OverlayTextEditor(
+                initialText: editor.text,
+                highlight: session.search.highlight(forPage: index),
+                focusRequest: editor.focusRequest
+            ) { text in
                 controller.editorTextChanged(text, in: session)
             }
             .padding(8)

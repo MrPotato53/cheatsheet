@@ -69,6 +69,8 @@ struct AppState: Decodable {
         let isPinned: Bool
         let isLoading: Bool
         let isEditingSearch: Bool
+        let isEditing: Bool
+        let zoom: Double
         let isVisible: Bool
         let isKey: Bool
         let isMovable: Bool
@@ -115,6 +117,12 @@ struct AppState: Decodable {
     let cursor: String
     /// Pre-rendered markdown/HTML start pages waiting to be adopted.
     let warmWebViews: Int
+    /// Overlay web pages kept loaded, most recently shown last.
+    let liveWebPages: [LiveWebPage]
+    struct LiveWebPage: Decodable {
+        let address: String
+        let currentURL: String
+    }
     let warmWebViewsReady: Int
     /// Overlay open → its web page visible, ms (-1: not yet).
     let webRevealMs: Double

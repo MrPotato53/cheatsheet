@@ -9,13 +9,18 @@ struct MediaPageView: View {
     /// AppKit views must not claim the cursor over the visible page.
     var isInteractive = true
     @Environment(\.isLiveOverlay) private var isLiveOverlay
+    @Environment(\.pageZoom) private var zoom
 
     var body: some View {
         switch MediaKind.of(page.url) {
         case .pdf:
-            PDFPageView(url: page.url, pageIndex: page.pdfPageIndex ?? 0, highlight: highlight)
+            zoomable {
+                PDFPageView(url: page.url, pageIndex: page.pdfPageIndex ?? 0, highlight: highlight)
+            }
         case .image:
-            ImageFileView(url: page.url, highlight: highlight)
+            zoomable {
+                ImageFileView(url: page.url, highlight: highlight)
+            }
         case .markdown where page.showsRaw, .html where page.showsRaw:
             TextFileView(url: page.url, highlight: highlight, isInteractive: isInteractive)
         case .markdown:
@@ -31,6 +36,19 @@ struct MediaPageView: View {
                 "Can't display \(page.url.lastPathComponent)",
                 systemImage: "questionmark.square.dashed"
             )
+        }
+    }
+
+    /// Fitted pages zoom by growing past the overlay, then scroll. Web and
+    /// text pages zoom their own content instead (page zoom, font size).
+    @ViewBuilder
+    private func zoomable(@ViewBuilder _ content: @escaping () -> some View) -> some View {
+        if isLiveOverlay {
+            GeometryReader { geometry in
+                ZoomScrollView(zoom: zoom, viewport: geometry.size, isInteractive: isInteractive, content: content)
+            }
+        } else {
+            content()
         }
     }
 }
@@ -175,7 +193,7 @@ struct TextFileView: NSViewRepresentable {
             textView.isSelectable = true
             textView.drawsBackground = false
             textView.textColor = .labelColor
-            textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            textView.font = .pageText(zoom: PageZoom.actualSize)
             textView.textContainerInset = NSSize(width: 16, height: 12)
         }
         return scrollView
@@ -184,6 +202,7 @@ struct TextFileView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         scrollView.isHidden = !isInteractive
         guard let textView = scrollView.documentView as? NSTextView else { return }
+        NSFont.applyPageText(zoom: context.environment.pageZoom, to: textView)
         // Re-read only for a new file or a new version of it (edited in
         // place), not on every SwiftUI update (hover, paging, search…).
         let version = FileStamp.versionedKey(for: url)

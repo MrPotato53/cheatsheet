@@ -121,29 +121,22 @@ struct OverlayToolbar: View {
     // MARK: - Buttons
 
     private var menuButton: some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.15)) {
-                isExpanded.toggle()
+        OverlayGroupToggle(
+            systemImage: "line.3.horizontal",
+            isExpanded: $isExpanded,
+            isShown: session.isPinned || isOverlayHovered,
+            isOverlayHovered: isOverlayHovered,
+            help: mode == .expandOnClick ? (isExpanded ? "Hide controls" : "Show controls") : "Cheatsheet buttons",
+            id: "overlay.moreButtons",
+            glass: glass
+        ) {
+            if session.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.tint)
+                    .offset(x: 5, y: -5)
             }
-        } label: {
-            Image(systemName: isExpanded ? "xmark" : "line.3.horizontal")
-                .frame(width: 18, height: 18)
-                .overlay(alignment: .topTrailing) {
-                    if session.isPinned, !isExpanded {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.tint)
-                            .offset(x: 5, y: -5)
-                    }
-                }
         }
-        .overlayControl()
-        .accessibilityIdentifier("overlay.moreButtons")
-        .circleChrome()
-        .glassEffectID("menu", in: glass)
-        .opacity(session.isPinned || isOverlayHovered || isExpanded ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: isOverlayHovered)
-        .help(mode == .expandOnClick ? (isExpanded ? "Hide controls" : "Show controls") : "Cheatsheet buttons")
     }
 
     private var searchButton: some View {

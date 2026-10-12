@@ -10,6 +10,8 @@ struct OverlayEditorState: Equatable {
     var isDirty = false
     /// Where the last save went; nil until something has been saved.
     var lastSave: EditSaveOutcome?
+    /// Bumped to put the caret back in the editor (e.g. closing search).
+    var focusRequest = 0
 }
 
 extension OverlayController {
@@ -26,15 +28,14 @@ extension OverlayController {
 
     func beginEditing(in session: OverlaySession) {
         guard session.editor == nil, let page = session.currentPage, Self.isEditable(page) else { return }
-        if session.search.isActive {
-            closeSearch(in: session)
-        }
         session.editor = OverlayEditorState(
             file: page.url.lastPathComponent,
             url: page.url,
             text: TextFile.read(page.url) ?? ""
         )
         session.panel.makeKey()
+        // An open search moves over to the source being edited.
+        refreshSearch(in: session)
     }
 
     func toggleEditing(in session: OverlaySession) {
@@ -49,6 +50,7 @@ extension OverlayController {
         guard session.editor != nil, session.editor?.text != text else { return }
         session.editor?.text = text
         session.editor?.isDirty = true
+        refreshSearch(in: session)
         session.editorSaveTask?.cancel()
         session.editorSaveTask = Task { [weak self, weak session] in
             try? await Task.sleep(for: Self.autosaveDelay)
@@ -72,6 +74,7 @@ extension OverlayController {
         session.editor = nil
         session.contentRevision += 1
         session.panel.makeFirstResponder(nil)
+        refreshSearch(in: session)
     }
 
     /// Keys while editing go to the text (arrows move the caret). Escape
@@ -90,6 +93,8 @@ extension OverlayController {
             return true
         }
         switch event.keyCode {
+        case 53 where session.search.isActive: // escape closes the search first
+            return nil
         case 53: // escape
             endEditing(in: session)
             return true
