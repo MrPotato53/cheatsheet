@@ -26,6 +26,12 @@ final class LaunchUITests: CheatsheetUITestCase {
 
     @MainActor
     func testLaunchPerformance() throws {
+        // TODO: re-enable once XCTApplicationLaunchMetric is reliable here.
+        // It intermittently records no metric for a launch iteration ("0 in
+        // iteration with index N") for this windowless accessory app, on the
+        // unchanged code too (seen 2026-10-11, macOS 26.5.1); waiting for the
+        // previous instance to exit between iterations didn't help.
+        try XCTSkipIf(true, "XCTApplicationLaunchMetric intermittently records no launch for this app")
         // Hermetic even for the perf launches: never read the real library.
         let application = XCUIApplication()
         application.launchEnvironment["CHEATSHEET_TEST_RUN"] = UUID().uuidString

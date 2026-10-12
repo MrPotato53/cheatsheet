@@ -22,10 +22,26 @@ In Xcode, switch plans from the test navigator's plan menu. A pre-commit hook
 (`.githooks/pre-commit`, enabled with `git config core.hooksPath .githooks`)
 runs the Unit plan; `git commit --no-verify` skips it.
 
-UI test runs load Apple's XCTAutomationSupport into apps XCUITest touches.
-It has crashed third-party apps mid-run (Terminal, Finder, VS Code — all
-inside `XCTAutomationSession`), so run the Full plan from a terminal you
-don't mind losing and don't commit from an editor while it runs.
+UI test runs load Apple's XCTAutomationSupport into every app XCUITest
+touches, and it can crash that app (inside `XCTAutomationSession`) when the
+run ends abruptly. Terminal, Finder and VS Code have all been hit. So:
+
+- Only Cheatsheet itself should ever be touched. Anything that makes XCTest
+  look at the frontmost app hooks whatever you're using instead, because
+  Cheatsheet is a menu-bar accessory and is never frontmost. Xcode's template
+  launch test (`runsForEachTargetApplicationUIConfiguration`) did exactly
+  that and crashed Terminal, so it was removed. Don't add it back, and don't
+  drive other apps through `XCUIApplication(bundleIdentifier:)`.
+- Let a run finish. Killing `xcodebuild` mid-run (Ctrl-C, a tool timeout)
+  is what turns a hooked app's teardown into a crash.
+
+To check a run touched nothing else, list the processes testmanagerd
+attached to; every PID should be a Cheatsheet test instance:
+
+```sh
+log show --last 30m --style compact \
+  --predicate 'process == "testmanagerd" AND eventMessage CONTAINS "requested endpoint"'
+```
 
 Notes for UI tests:
 
