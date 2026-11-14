@@ -52,6 +52,15 @@ final class OverlayPanel: NSPanel {
     // Intercept before the responder chain: the SwiftUI hosting view otherwise
     // swallows Escape and arrow keys before they reach the window's keyDown.
     override func sendEvent(_ event: NSEvent) {
+        // ⌃⌘-drag moves the overlay from anywhere, as macOS's own
+        // drag-anywhere gesture does — text, web and PDF pages otherwise keep
+        // the mouse for selecting and scrolling. Taken before the content (or
+        // control-click's menu) sees the press.
+        if event.type == .leftMouseDown,
+           Self.startsGestureDrag(modifiers: event.modifierFlags, isMovable: isMovableByWindowBackground) {
+            performDrag(with: event)
+            return
+        }
         if event.type == .keyDown, performEditingShortcut(event) { return }
         if event.type == .keyDown, keyHandler?(event) == true { return }
         // In hold-to-show mode the hotkey's modifiers stay pressed; shift turns
@@ -68,6 +77,12 @@ final class OverlayPanel: NSPanel {
             }
         }
         super.sendEvent(event)
+    }
+
+    /// Both ⌃ and ⌘ held (others ignored), on an overlay whose sheet allows
+    /// dragging.
+    static func startsGestureDrag(modifiers: NSEvent.ModifierFlags, isMovable: Bool) -> Bool {
+        isMovable && modifiers.contains([.control, .command])
     }
 
     /// Shift scrolls sideways (as everywhere in macOS), unless it's held as

@@ -12,7 +12,12 @@ struct CheatsheetsSettingsView: View {
     }
 
     @Environment(CheatsheetStore.self) private var store
+    @Environment(SettingsNavigation.self) private var navigation
     @State private var selection: Cheatsheet.ID?
+    /// The sidebar row a drag is over, and whether one is over the selected
+    /// sheet's settings: both add to that sheet instead of creating one.
+    @State private var dropTargetRow: Cheatsheet.ID?
+    @State private var isDetailDropTargeted = false
     @State private var isImporterPresented = false
     @State private var importTarget: ImportTarget = .newSheet
     @State private var presentedForm: PresentedForm?
@@ -61,10 +66,14 @@ struct CheatsheetsSettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onAppear {
+            applyNavigationRequests()
             if selection == nil {
                 selection = store.sheets.first?.id
             }
         }
+        .onChange(of: navigation.sheetRequest) { _, _ in applyNavigationRequests() }
+        .onChange(of: navigation.archiveRequest) { _, _ in applyNavigationRequests() }
+        .onChange(of: navigation.newSheetFormRequest) { _, _ in applyNavigationRequests() }
         .fileImporter(
             isPresented: $isImporterPresented,
             allowedContentTypes: Self.importableTypes,
@@ -121,13 +130,8 @@ struct CheatsheetsSettingsView: View {
         VStack(spacing: 0) {
             List(selection: $selection) {
                 ForEach(store.sheets) { sheet in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(sheet.name)
-                        Text(shortcutLabel(for: sheet))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .tag(sheet.id)
+                    sidebarRow(sheet)
+                        .tag(sheet.id)
                 }
                 .onMove { offsets, destination in
                     store.moveSheets(fromOffsets: offsets, toOffset: destination)
@@ -171,19 +175,62 @@ struct CheatsheetsSettingsView: View {
             .buttonStyle(.borderless)
             .padding(6)
         }
+    }
+
+    /// Dropping files or links on a sheet adds them to it.
+    private func sidebarRow(_ sheet: Cheatsheet) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(sheet.name)
+            Text(shortcutLabel(for: sheet))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
         .dropDestination(for: URL.self) { urls, _ in
-            let dropped = DroppedItems(urls)
-            guard !dropped.isEmpty else { return false }
-            // Exports are imported as the cheatsheets they contain.
-            if !dropped.archives.isEmpty {
-                importArchives(dropped.archives)
+            add(urls, to: sheet.id)
+        } isTargeted: { targeted in
+            if targeted {
+                dropTargetRow = sheet.id
+            } else if dropTargetRow == sheet.id {
+                dropTargetRow = nil
             }
-            // Anything else becomes one new cheatsheet: files as pages, links
-            // (e.g. from a browser's address bar) as web pages.
-            if let sheet = addSheet(files: dropped.files, webPages: dropped.webPages) {
-                selection = sheet.id
+        }
+        .background {
+            if dropTargetRow == sheet.id {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.15))
+                    .strokeBorder(Color.accentColor, lineWidth: 1.5)
+                    .padding(-4)
             }
-            return true
+        }
+        .animation(.easeInOut(duration: 0.15), value: dropTargetRow)
+        .accessibilityIdentifier("sheets.row.\(sheet.name)")
+    }
+
+    /// Adds dropped files and links to an existing sheet and selects it.
+    private func add(_ urls: [URL], to sheetID: Cheatsheet.ID) -> Bool {
+        let dropped = DroppedItems(urls)
+        guard !dropped.files.isEmpty || !dropped.webPages.isEmpty else { return false }
+        let added = HTMLResourceAccess.withResourceAccess(for: dropped.files) {
+            store.add(dropped, to: sheetID)
+        }
+        if added {
+            selection = sheetID
+        }
+        return added
+    }
+
+    /// A sheet to select or exports to import, requested from outside this
+    /// view (an overlay, Finder, a drop on the General tab).
+    private func applyNavigationRequests() {
+        if let sheetID = navigation.consumeSheetRequest(), store.sheets.contains(where: { $0.id == sheetID }) {
+            selection = sheetID
+        }
+        importArchives(navigation.consumeArchiveRequest())
+        // Not over another pop-up or the file picker: one at a time.
+        if navigation.consumeNewSheetFormRequest(), presentedForm == nil, !isImporterPresented {
+            presentedForm = .newCheatsheet
         }
     }
 
@@ -204,6 +251,10 @@ struct CheatsheetsSettingsView: View {
                     }
                 )
                 .id(selectedSheet.id)
+                .dropDestination(for: URL.self) { urls, _ in
+                    add(urls, to: selectedSheet.id)
+                } isTargeted: { isDetailDropTargeted = $0 }
+                .dropHighlight(isDetailDropTargeted, label: "Add to “\(selectedSheet.name)”", systemImage: "doc.badge.plus")
             } else {
                 VStack(spacing: 16) {
                     Image(systemName: "rectangle.stack.badge.plus")
@@ -225,17 +276,6 @@ struct CheatsheetsSettingsView: View {
                 }
             }
         }
-    }
-
-    private func addSheet(files: [URL], webPages: [WebLocation.Entry]) -> Cheatsheet? {
-        guard !files.isEmpty else {
-            return webPages.isEmpty ? nil : store.addSheet(webPages: webPages)
-        }
-        let sheet = HTMLResourceAccess.withResourceAccess(for: files) { store.addSheet(files: files) }
-        if let sheet, !webPages.isEmpty {
-            store.addWebPages(webPages, to: sheet.id)
-        }
-        return sheet
     }
 
     // MARK: - Web pages

@@ -10,6 +10,17 @@ final class CheatsheetStore {
     /// Bumped on any change, including shortcut edits that live in KeyboardShortcuts'
     /// own storage, so views showing shortcut labels re-render.
     private(set) var revision = 0
+    /// Per sheet, bumped when its files changed on disk (FileChangeMonitor);
+    /// previews in settings reload on it.
+    private(set) var fileRevisions: [Cheatsheet.ID: Int] = [:]
+
+    func fileRevision(for sheetID: Cheatsheet.ID) -> Int {
+        fileRevisions[sheetID] ?? 0
+    }
+
+    func noteFilesChanged(in sheetID: Cheatsheet.ID) {
+        fileRevisions[sheetID, default: 0] += 1
+    }
     var onChange: (@MainActor () -> Void)?
 
     let rootURL: URL
@@ -73,6 +84,7 @@ final class CheatsheetStore {
         if decoded.isLossy {
             backUpLibrary()
         }
+        recordMissingDependencies()
     }
 
     /// Decodes each sheet independently, so one unreadable entry costs only
@@ -134,6 +146,7 @@ final class CheatsheetStore {
         let copied = copyFiles(urls, into: sheet, linksOriginals: linksOriginals)
         sheet.files = copied.map(\.name)
         sheet.links = Self.links(of: copied)
+        sheet.dependencies = Self.dependencies(of: copied)
         guard !sheet.files.isEmpty else { return nil }
         sheets.append(sheet)
         if assignDefaultShortcut, let digit = Self.firstFreeDigit(taken: takenDigits()) {
@@ -156,6 +169,7 @@ final class CheatsheetStore {
         let names = copied.map(\.name)
         sheets[index].files.append(contentsOf: names)
         sheets[index].links.merge(Self.links(of: copied)) { _, new in new }
+        sheets[index].dependencies.merge(Self.dependencies(of: copied)) { _, new in new }
         if !sheets[index].pageOrder.isEmpty {
             sheets[index].pageOrder += Self.expandRefs(files: names, for: sheets[index], mediaRoot: mediaRoot)
         }
@@ -167,12 +181,17 @@ final class CheatsheetStore {
         Dictionary(uniqueKeysWithValues: copied.compactMap { file in file.link.map { (file.name, $0) } })
     }
 
+    private static func dependencies(of copied: [CopiedFile]) -> [String: [String]] {
+        Dictionary(uniqueKeysWithValues: copied.compactMap { file in file.dependencies.map { (file.name, $0) } })
+    }
+
     func removeFile(_ file: String, from sheetID: Cheatsheet.ID) {
         guard let index = sheets.firstIndex(where: { $0.id == sheetID }) else { return }
         let removedURL = fileURL(for: sheets[index], file: file)
-        let removedRoots = MediaKind.of(removedURL) == .html ? HTMLResources.referencedRoots(ofFileAt: removedURL) : []
+        let removedRoots = sheets[index].dependencies[file] ?? []
         try? FileManager.default.removeItem(at: removedURL)
         sheets[index].files.removeAll { $0 == file }
+        sheets[index].dependencies[file] = nil
         removeOrphanedResources(removedRoots, in: sheets[index])
         sheets[index].pageOrder.removeAll { $0.file == file }
         sheets[index].rawFiles.remove(file)
@@ -333,10 +352,8 @@ final class CheatsheetStore {
     /// Deletes resource roots no remaining HTML page of the sheet references.
     private func removeOrphanedResources(_ roots: [String], in sheet: Cheatsheet) {
         guard !roots.isEmpty else { return }
-        let stillUsed = Set(sheet.files.flatMap { file -> [String] in
-            let url = fileURL(for: sheet, file: file)
-            return MediaKind.of(url) == .html ? HTMLResources.referencedRoots(ofFileAt: url) : []
-        })
+        // Another page may have recorded the same file (two pages, one style.css).
+        let stillUsed = Set(sheet.dependencies.values.joined())
         for root in roots where !stillUsed.contains(root) && !sheet.files.contains(root) {
             try? FileManager.default.removeItem(at: fileURL(for: sheet, file: root))
         }
@@ -345,6 +362,8 @@ final class CheatsheetStore {
     private struct CopiedFile {
         let name: String
         let link: FileLink?
+        /// Nil for types that never depend on other files.
+        var dependencies: [String]?
     }
 
     /// Copies are always made; a link to each original is recorded too, so
@@ -368,10 +387,14 @@ final class CheatsheetStore {
                 let copy = directory.appendingPathComponent(name)
                 try FileManager.default.copyItem(at: url, to: copy)
                 let link = linksOriginals ? OriginalFiles.makeLink(original: url, copy: copy) : nil
-                copied.append(CopiedFile(name: name, link: link))
+                var file = CopiedFile(name: name, link: link)
                 if MediaKind.of(url) == .html {
                     HTMLResources.copyResources(ofPageAt: url, into: directory)
+                    // What it uses that's now beside it (copied, or already
+                    // there from another page).
+                    file.dependencies = Self.presentDependencies(ofPageAt: copy, in: directory)
                 }
+                copied.append(file)
             } catch {
                 continue
             }

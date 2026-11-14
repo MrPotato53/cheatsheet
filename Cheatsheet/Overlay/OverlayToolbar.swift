@@ -1,3 +1,4 @@
+import KeyboardShortcuts
 import SwiftUI
 
 /// How the overlay's buttons are shown (General settings).
@@ -114,6 +115,9 @@ struct OverlayToolbar: View {
                     editButton
                 }
             }
+            if session.editor == nil {
+                settingsButton
+            }
             pinButton
         }
     }
@@ -187,6 +191,29 @@ struct OverlayToolbar: View {
         .opacity(revealed())
         .animation(.easeInOut(duration: 0.15), value: isOverlayHovered)
         .help("Edit this page (⌘E)")
+    }
+
+    private var settingsButton: some View {
+        Button {
+            controller.openInSettings(session)
+        } label: {
+            Image(systemName: "gearshape")
+                .frame(width: 18, height: 18)
+        }
+        .overlayControl()
+        .accessibilityIdentifier("overlay.openInSettings")
+        .circleChrome()
+        .glassEffectID("settings", in: glass)
+        .opacity(revealed())
+        .animation(.easeInOut(duration: 0.15), value: isOverlayHovered)
+        .help(settingsHelp)
+    }
+
+    private var settingsHelp: String {
+        guard let shortcut = KeyboardShortcuts.getShortcut(for: .openInSettings) else {
+            return "Open in Settings"
+        }
+        return "Open in Settings (\(shortcut))"
     }
 
     private var doneButton: some View {

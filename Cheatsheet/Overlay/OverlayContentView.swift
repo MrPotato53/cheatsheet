@@ -211,7 +211,7 @@ struct OverlayContentView: View {
         }
         .frame(height: Self.dragStripHeight)
         .frame(maxWidth: .infinity)
-        .help("Drag to move")
+        .help("Drag to move, or ⌃⌘-drag anywhere")
     }
 
     private var pageControls: some View {

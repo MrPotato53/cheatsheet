@@ -1,6 +1,4 @@
 import AppKit
-import QuickLook
-import QuickLookThumbnailing
 import SwiftUI
 
 /// A copy and its original as two cards: thumbnail and facts together.
@@ -15,10 +13,10 @@ struct SyncReviewSheet: View {
     @State private var kept: Set<Version> = []
     @State private var hoveredVersion: Version?
     @State private var isConfirmingOverwrite = false
-    @State private var quickLookURL: URL?
-    /// The original is outside the sandbox: Quick Look reads it only while
-    /// access is held.
-    @State private var accessedURL: URL?
+    @State private var previewTarget: ReviewFullPreview.Target?
+    /// The original's contents beside the copy, rendered against the sheet's
+    /// own files — what keeping the original would actually look like.
+    @State private var stagedOriginal: URL?
 
     enum Version: CaseIterable {
         case original, copy
@@ -92,11 +90,19 @@ struct SyncReviewSheet: View {
                 .hidden()
         }
         .opensUnfocused()
-        .quickLookPreview($quickLookURL)
-        .onChange(of: quickLookURL) { _, url in
-            if url == nil { endAccess() }
+        .sheet(item: $previewTarget) { target in
+            ReviewFullPreview(target: target) { previewTarget = nil }
         }
-        .onDisappear(perform: endAccess)
+        .task(id: original.url) {
+            ReviewRendering.remove(stagedOriginal)
+            stagedOriginal = original.url.flatMap { originalURL in
+                copyURL.flatMap { ReviewRendering.stage(original: originalURL, besideCopy: $0) }
+            }
+        }
+        .onDisappear {
+            ReviewRendering.remove(stagedOriginal)
+            stagedOriginal = nil
+        }
         .confirmationDialog("Overwrite the original?", isPresented: $isConfirmingOverwrite) {
             Button("Overwrite Original", role: .destructive) {
                 resolve(.useCheatsheetCopy)
@@ -162,13 +168,14 @@ struct SyncReviewSheet: View {
         return VersionCard(
             title: version == .original ? "Original" : "Copy",
             url: side.url,
+            renderURL: renderURL(of: version, side: side),
             fingerprint: side.fingerprint,
             location: version == .original ? originalPath(of: side) ?? "Not found" : "In this cheatsheet",
             isNewer: isNewer,
             isKept: kept.contains(version),
             isReplaced: !kept.isEmpty && !kept.contains(version),
             onToggle: { toggle(version) },
-            onPreview: { preview(side.url) },
+            onPreview: { preview(version, side: side) },
             onHover: { hovering in
                 if hovering {
                     hoveredVersion = version
@@ -200,36 +207,39 @@ struct SyncReviewSheet: View {
     // MARK: - Quick Look
 
     private func togglePreviewOfHovered() {
-        if quickLookURL != nil {
-            quickLookURL = nil
+        if previewTarget != nil {
+            previewTarget = nil
             return
         }
         guard let hoveredVersion, let sheet = store.sheets.first(where: { $0.id == sheetID }) else { return }
-        preview(hoveredVersion == .original
-            ? store.originalURL(ofFile: file, in: sheet)
-            : store.fileURL(for: sheet, file: file))
+        let side = hoveredVersion == .original
+            ? originalSide(sheet)
+            : Side(fingerprint: nil, url: store.fileURL(for: sheet, file: file))
+        preview(hoveredVersion, side: side)
     }
 
-    private func preview(_ url: URL?) {
-        guard let url else { return }
-        endAccess()
-        if url.startAccessingSecurityScopedResource() {
-            accessedURL = url
-        }
-        quickLookURL = url
+    /// What a version looks like in the cheatsheet: the copy as it is, the
+    /// original as staged beside it.
+    private func renderURL(of version: Version, side: Side) -> URL? {
+        version == .original ? stagedOriginal : side.url
     }
 
-    private func endAccess() {
-        accessedURL?.stopAccessingSecurityScopedResource()
-        accessedURL = nil
+    private func preview(_ version: Version, side: Side) {
+        guard let url = renderURL(of: version, side: side) else { return }
+        previewTarget = ReviewFullPreview.Target(
+            title: "\(version == .original ? "Original" : "Copy") — \(file)",
+            url: url
+        )
     }
 }
 
 /// One version: a tickable card with its thumbnail, date, size and place.
-/// While hovered, a corner button opens it in Quick Look.
+/// While hovered, a corner button opens it full size.
 private struct VersionCard: View {
     let title: String
     let url: URL?
+    /// The file to render: shows the version as the cheatsheet would.
+    let renderURL: URL?
     let fingerprint: FileFingerprint?
     let location: String
     let isNewer: Bool
@@ -239,7 +249,6 @@ private struct VersionCard: View {
     let onToggle: () -> Void
     let onPreview: () -> Void
     let onHover: (Bool) -> Void
-    @State private var image: NSImage?
     @State private var isHovering = false
 
     private static let thumbnailSize = CGSize(width: 220, height: 120)
@@ -319,17 +328,13 @@ private struct VersionCard: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityValue(isKept ? "kept" : "not kept")
         .accessibilityAction(named: "Toggle", onToggle)
-        .task(id: url) {
-            image = await Self.thumbnail(for: url)
-        }
     }
 
     private var thumbnail: some View {
         ZStack {
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
+            if let renderURL {
+                LivePageThumbnail(url: renderURL)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
                     .padding(6)
             } else if url != nil {
                 ProgressView()
@@ -340,7 +345,7 @@ private struct VersionCard: View {
         .frame(height: Self.thumbnailSize.height)
         .background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
         .overlay(alignment: .topTrailing) {
-            if isHovering, url != nil {
+            if isHovering, renderURL != nil {
                 Button(action: onPreview) {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .padding(5)
@@ -352,22 +357,5 @@ private struct VersionCard: View {
                 .accessibilityIdentifier("review.preview")
             }
         }
-    }
-
-    /// Quick Look renders any kind of file the system can (PDF, image,
-    /// HTML, text…), falling back to its icon.
-    private static func thumbnail(for url: URL?) async -> NSImage? {
-        guard let url else { return nil }
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer {
-            if accessing { url.stopAccessingSecurityScopedResource() }
-        }
-        let request = QLThumbnailGenerator.Request(
-            fileAt: url,
-            size: thumbnailSize,
-            scale: NSScreen.main?.backingScaleFactor ?? 2,
-            representationTypes: .all
-        )
-        return try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).nsImage
     }
 }

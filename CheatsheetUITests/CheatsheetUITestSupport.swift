@@ -71,6 +71,8 @@ struct AppState: Decodable {
         let isEditingSearch: Bool
         let isEditing: Bool
         let zoom: Double
+        /// Bumped whenever the overlay's pages re-read their files.
+        let contentRevision: Int
         let isVisible: Bool
         let isKey: Bool
         let isMovable: Bool
@@ -98,6 +100,8 @@ struct AppState: Decodable {
         let keepsStartPageLoaded: Bool
         let fileCount: Int
         let rawFiles: [String]
+        /// Files linked to an original.
+        let linkedFiles: [String]
     }
 
     let nonce: String
@@ -113,6 +117,14 @@ struct AppState: Decodable {
     let settingsIsKey: Bool
     let dismissWithEsc: Bool
     let dockIconPolicy: String
+    /// "light" | "dark" | "system", and what the app actually draws with
+    /// ("NSAppearanceNameAqua" / "NSAppearanceNameDarkAqua").
+    let appearance: String
+    let effectiveAppearance: String
+    /// "general" | "cheatsheets".
+    let settingsTab: String
+    let launcherVisible: Bool
+    let launcherResults: [String]
     /// "pointingHand", "openHand", "arrow", "iBeam" or "other".
     let cursor: String
     /// Pre-rendered markdown/HTML start pages waiting to be adopted.
@@ -224,7 +236,10 @@ class CheatsheetUITestCase: XCTestCase {
 
     func clickStatusMenuItem(_ title: String, file: StaticString = #filePath, line: UInt = #line) {
         guard statusItemIsClickable else {
-            if title == "Settings…" {
+            if title == "New Cheatsheet…" {
+                postDebug("newCheatsheet")
+                app.activate()
+            } else if title == "Settings…" {
                 postDebug("openSettings")
                 // A real menu click activates the app as a side effect; the
                 // debug command can't (cooperative activation is denied while

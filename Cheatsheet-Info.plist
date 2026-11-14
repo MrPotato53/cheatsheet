@@ -5,6 +5,30 @@
 	<!-- Merged with the generated Info.plist. Web page cheatsheets may be
 	     plain http (local dev servers, LAN devices); this allows that inside
 	     web views only, leaving the app's own connections under ATS. -->
+	<!-- Offered under Finder's Open With and accepted on the Dock icon, but
+	     never the default app for these types (Alternate rank). Mirrors what
+	     MediaKind can show. -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Cheatsheet Page</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.adobe.pdf</string>
+				<string>public.image</string>
+				<string>net.daringfireball.markdown</string>
+				<string>public.html</string>
+				<string>public.plain-text</string>
+				<string>public.source-code</string>
+				<string>com.apple.web-internet-location</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoadsInWebContent</key>

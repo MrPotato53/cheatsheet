@@ -21,10 +21,12 @@ struct GeneralSettingsView: View {
     @AppStorage(OverlayButtonsMode.defaultsKey, store: AppDefaults.store) private var overlayButtonsMode = OverlayButtonsMode.expanded
     @AppStorage(SearchScope.defaultsKey, store: AppDefaults.store) private var searchScope = SearchScope.allPages
     @AppStorage(ZoomMemory.enabledKey, store: AppDefaults.store) private var remembersZoom = false
+    @AppStorage(AppAppearance.defaultsKey, store: AppDefaults.store) private var appearance = AppAppearance.system
 
     var body: some View {
         Form {
             Section("App") {
+                appearancePicker
                 Toggle("Open at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in
                         setLaunchAtLogin(enabled)
@@ -134,6 +136,15 @@ struct GeneralSettingsView: View {
                         AppModel.shared.hotkeys.updatePinShortcutAvailability()
                     }
                 }
+                LabeledContent("Open in settings shortcut") {
+                    KeyboardShortcuts.Recorder("", name: .openInSettings) { _ in
+                        // Recording registers it system-wide; the overlay
+                        // matches it itself, so take that back.
+                        AppModel.shared.hotkeys.keepOpenInSettingsLocal()
+                    }
+                }
+                .accessibilityIdentifier("general.openInSettingsShortcut")
+                .help("Opens the cheatsheet you're looking at here, in Settings. Works while the cheatsheet has focus.")
                 if let pinShortcutWarning {
                     Text(pinShortcutWarning)
                         .font(.caption)
@@ -164,6 +175,34 @@ struct GeneralSettingsView: View {
             searchShortcutWarning = SystemShortcuts.conflictWarning(
                 for: KeyboardShortcuts.getShortcut(for: .openSearch)
             )
+        }
+    }
+
+    /// Light / dark / follow the system, like System Settings → Appearance.
+    private var appearancePicker: some View {
+        // The control sits on the right, as in every other row.
+        LabeledContent("Appearance") {
+            Picker("Appearance", selection: $appearance) {
+                ForEach(AppAppearance.allCases) { option in
+                    Group {
+                        switch option {
+                        case .light: Image(systemName: "sun.max")
+                        case .dark: Image(systemName: "moon")
+                        case .system: Text(option.label)
+                        }
+                    }
+                    .help(option.label)
+                    .accessibilityLabel(option.label)
+                    .tag(option)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .accessibilityIdentifier("general.appearance")
+        }
+        .onChange(of: appearance) { _, _ in
+            AppAppearance.applyCurrent()
         }
     }
 

@@ -9,6 +9,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         return true
     }
+
+    /// Finder's Open With, or files dropped on the Dock icon.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        AppModel.shared.openFiles(urls)
+    }
 }
 
 @main
@@ -42,6 +47,7 @@ struct CheatsheetApp: App {
             SettingsRootView()
                 .environment(model.store)
                 .environment(model.overlay)
+                .environment(model.settingsNavigation)
         }
         .defaultSize(width: 760, height: 520)
     }
@@ -55,6 +61,9 @@ struct CheatsheetApp: App {
         }
         if !model.store.sheets.isEmpty {
             Divider()
+        }
+        Button("New Cheatsheet…") {
+            AppModel.shared.openNewCheatsheetForm()
         }
         Button("Settings…") {
             AppModel.shared.openSettings()

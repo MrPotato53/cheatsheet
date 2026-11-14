@@ -7,6 +7,9 @@ extension KeyboardShortcuts.Name {
     /// Opens the cheatsheet search bar; registered only while the open method
     /// includes search (see updateOpenMethodAvailability).
     static let openSearch = Self("openCheatsheetSearch", default: .init(.space, modifiers: [.command, .shift]))
+    /// Opens the focused overlay's sheet in settings. Matched by the overlay
+    /// itself, never registered globally (see keepOpenInSettingsLocal).
+    static let openInSettings = Self("openCheatsheetInSettings", default: .init(.comma, modifiers: [.command]))
 }
 
 @MainActor
@@ -35,6 +38,18 @@ final class HotkeyManager {
                 AppModel.shared.launcher.toggle()
             }
         }
+        keepOpenInSettingsLocal()
+    }
+
+    /// KeyboardShortcuts registers a system-wide hotkey whenever a shortcut is
+    /// set (its default on first use, or a recording) — even with no handler,
+    /// which would swallow ⌘, in every app. The overlay matches this one
+    /// itself, so drop that registration, then re-apply the other shortcuts
+    /// in case one shares the combination.
+    func keepOpenInSettingsLocal() {
+        KeyboardShortcuts.disable(.openInSettings)
+        updateOpenMethodAvailability()
+        updatePinShortcutAvailability()
     }
 
     /// A since-removed build shipped a one-time migration that stripped the

@@ -293,7 +293,8 @@ struct CheatsheetStoreTests {
         let titles = { (sheets: [Cheatsheet], query: String) in
             LauncherResult.ranked(sheets: sheets, query: query).map(\.title)
         }
-        #expect(titles([vim], "set") == ["Settings"])
+        // "New CheatSheeT" also matches "set" (scattered), below Settings.
+        #expect(titles([vim], "set") == ["Settings", "New Cheatsheet"])
         #expect(titles([vim], "vim") == ["Vim"])
         #expect(LauncherResult.ranked(sheets: [vim], query: "sett").first?.sheet == nil)
 
@@ -303,7 +304,7 @@ struct CheatsheetStoreTests {
         #expect(results.first?.sheet?.id == named.id)
         #expect(results.last?.sheet == nil)
         // A better match still wins over Settings.
-        #expect(titles([Cheatsheet(name: "Set")], "set") == ["Set", "Settings"])
+        #expect(titles([Cheatsheet(name: "Set")], "set") == ["Set", "Settings", "New Cheatsheet"])
     }
 
     @Test func launcherEmptyStateListsNothingAllOrRecent() {

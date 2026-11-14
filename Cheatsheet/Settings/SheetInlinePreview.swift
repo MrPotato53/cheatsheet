@@ -54,7 +54,7 @@ struct SheetInlinePreview: View {
                     .id(refreshToken)
                     .frame(height: 112)
                 // Selection clicks (shift, ⌘) work as elsewhere on macOS.
-                Text("Drag to reorder or hide · Right-click for more")
+                Text("Double-click to open · Drag to reorder or hide · Right-click for more")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -103,6 +103,9 @@ struct SheetInlinePreview: View {
             resolveIncoming: { key in
                 hiddenPages.first { $0.key == key }?.withHidden(false)
             },
+            onOpen: { page in
+                overlay.show(sheet, at: page)
+            },
             onDragActive: { active in
                 isDragActive = active
                 if active {
@@ -140,6 +143,9 @@ struct SheetInlinePreview: View {
             },
             resolveIncoming: { key in
                 shownPages.first { $0.key == key }?.withHidden(true)
+            },
+            onOpen: { page in
+                overlay.show(sheet, at: page)
             },
             onDragActive: { active in
                 isDragActive = active

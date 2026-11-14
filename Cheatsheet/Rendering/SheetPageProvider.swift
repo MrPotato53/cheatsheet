@@ -82,6 +82,9 @@ extension CheatsheetStore {
         var refs: [PageRef] = []
         for file in files {
             let url = Self.fileURL(mediaRoot: mediaRoot, sheetID: sheet.id, file: file)
+            // Listed in Files with an error (e.g. dropped into the folder),
+            // never a page. A missing file still gets one: its placeholder.
+            guard MediaKind.of(url) != .unsupported else { continue }
             if MediaKind.of(url) == .pdf, let document = PDFCache.document(at: url), document.pageCount > 0 {
                 refs += (0..<document.pageCount).map { PageRef(file: file, pdfPageIndex: $0) }
             } else {

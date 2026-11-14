@@ -106,6 +106,12 @@ nonisolated struct Cheatsheet: Identifiable, Codable, Hashable {
     /// Originals of files, by file name, for "keep in sync with original
     /// files". Machine-specific, so never exported.
     var links: [String: FileLink] = [:]
+    /// Files a page needs that aren't pages themselves, by page file name:
+    /// an HTML page's stylesheets, images, "<name>_files" folder (top-level
+    /// names in the sheet's folder). Recorded at import, so cleanup and the
+    /// folder scan know what each file is for. HTML pages always have an
+    /// entry (empty when they need nothing).
+    var dependencies: [String: [String]] = [:]
 
     var shortcutName: KeyboardShortcuts.Name {
         KeyboardShortcuts.Name("cheatsheet-\(id.uuidString)")
@@ -126,6 +132,7 @@ extension Cheatsheet {
     private enum CodingKeys: String, CodingKey {
         case id, name, files, pageOrder, activation, startPage, keepsStartPageLoaded, previewScale
         case position, dragBehavior, resizeBehavior, target, rotation, rawFiles, links
+        case dependencies
     }
 
     /// Pre-1.x libraries stored two-state persistence modes under these keys.
@@ -164,5 +171,7 @@ extension Cheatsheet {
         rawFiles = try container.decodeIfPresent(Set<String>.self, forKey: .rawFiles) ?? []
         // A link that can't be read only loses its sync, never the sheet.
         links = (try? container.decodeIfPresent([String: FileLink].self, forKey: .links)) ?? [:]
+        // Older libraries have none; CheatsheetStore derives them on load.
+        dependencies = try container.decodeIfPresent([String: [String]].self, forKey: .dependencies) ?? [:]
     }
 }

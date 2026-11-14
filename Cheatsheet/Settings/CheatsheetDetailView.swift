@@ -16,6 +16,8 @@ struct CheatsheetDetailView: View {
     @State private var reviewingFile: ReviewTarget?
     @State private var linkProblem: String?
     @State private var pagesRefreshToken = 0
+    /// The file whose dependency list is shown in a popover.
+    @State private var dependenciesShownFor: String?
     /// Search-only mode grays out the shortcut and activation mode (the
     /// shortcut is kept, just not registered).
     @AppStorage(SheetOpenMethod.defaultsKey, store: AppDefaults.store) private var openMethod = SheetOpenMethod.shortcuts
@@ -36,7 +38,7 @@ struct CheatsheetDetailView: View {
 
             // Page reordering lives solely in the Pages gallery below; this
             // section manages what the pages come from.
-            Section("Files and Web Pages") {
+            Section {
                 if sheet.files.isEmpty {
                     Text("No files or web pages").foregroundStyle(.secondary)
                 }
@@ -60,18 +62,16 @@ struct CheatsheetDetailView: View {
                     Button("Add Web Page…", action: requestAddWebPage)
                         .accessibilityIdentifier("detail.addWebPage")
                 }
-            }
-
-            Section {
-                SheetInlinePreview(sheet: sheet, refreshToken: pagesRefreshToken)
             } header: {
                 HStack {
-                    Text("Pages")
+                    Text("Files and Web Pages")
                     Spacer()
+                    // One reload for the sheet: files are the source of
+                    // truth, the Pages section follows. Changes on disk are
+                    // picked up on their own; this is the manual fallback.
                     Button {
                         Task {
-                            // Pull edited originals into their copies first.
-                            await store.checkLinks(for: sheet.id)
+                            await AppModel.shared.fileMonitor.refresh(sheet.id)
                             pagesRefreshToken += 1
                         }
                     } label: {
@@ -79,9 +79,15 @@ struct CheatsheetDetailView: View {
                     }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
-                    .help("Reload pages from their files")
+                    .help("Reload files (changes on disk are picked up automatically)")
                     .accessibilityIdentifier("detail.refreshPages")
                 }
+            }
+
+            Section {
+                SheetInlinePreview(sheet: sheet, refreshToken: pagesRefreshToken &+ store.fileRevision(for: sheet.id))
+            } header: {
+                Text("Pages")
             }
 
             Section("When Opened") {
@@ -306,6 +312,80 @@ struct CheatsheetDetailView: View {
         return original
     }
 
+    /// "+ 3 files" (and "· 1 missing") after a page that uses other files,
+    /// opening a list of them. Nothing for pages that stand alone.
+    @ViewBuilder
+    private func dependenciesCaption(for file: String) -> some View {
+        let dependencies = sheet.dependencies[file] ?? []
+        if !dependencies.isEmpty {
+            let missing = dependencies.filter { !store.fileExists(for: sheet, file: $0) }
+            Button {
+                dependenciesShownFor = file
+            } label: {
+                HStack(spacing: 3) {
+                    Text("+ \(dependencies.count) file\(dependencies.count == 1 ? "" : "s")")
+                        .foregroundStyle(.tertiary)
+                    if !missing.isEmpty {
+                        Text("· \(missing.count) missing")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .help("Files this page uses, kept with it")
+            .accessibilityIdentifier("detail.dependencies")
+            .popover(isPresented: Binding(
+                get: { dependenciesShownFor == file },
+                set: { if !$0 { dependenciesShownFor = nil } }
+            )) {
+                dependencyList(dependencies, missing: Set(missing))
+            }
+        }
+    }
+
+    private func dependencyList(_ dependencies: [String], missing: Set<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Used by this page")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ForEach(dependencies, id: \.self) { name in
+                HStack(spacing: 4) {
+                    Text(name)
+                    if missing.contains(name) {
+                        Text("missing").foregroundStyle(.orange)
+                    }
+                }
+                .font(.caption)
+            }
+        }
+        .padding(10)
+        .opensUnfocused()
+    }
+
+    /// Read from the library's current sheet: rows live in an embedded
+    /// AppKit host and can hold an older copy of the sheet.
+    private func hasRevealableOriginal(_ file: String) -> Bool {
+        let current = store.sheets.first { $0.id == sheet.id } ?? sheet
+        return store.syncsWithOriginals && store.originalURL(ofFile: file, in: current) != nil
+    }
+
+    /// Both locations of a linked file, whichever the folder button shows.
+    /// Files without an original get no menu: it would repeat the button.
+    @ViewBuilder
+    private func revealMenu(for file: String, exists: Bool) -> some View {
+        // The library's current sheet, read when the menu opens: rows live in
+        // an embedded AppKit host and can hold an older copy of the sheet.
+        let current = store.sheets.first { $0.id == sheet.id } ?? sheet
+        if store.syncsWithOriginals, let original = store.originalURL(ofFile: file, in: current) {
+            Button("Show Original in Finder") { reveal(original) }
+                .accessibilityIdentifier("detail.revealOriginal")
+            Button("Show Cheatsheet's Copy in Finder") { reveal(store.fileURL(for: current, file: file)) }
+                .disabled(!exists)
+                .accessibilityIdentifier("detail.revealCopy")
+        }
+    }
+
     private func documentRow(_ file: String) -> some View {
         let exists = store.fileExists(for: sheet, file: file)
         let state = store.syncState(of: file, in: sheet)
@@ -334,8 +414,17 @@ struct CheatsheetDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .labelStyle(.titleAndIcon)
-                    .help("The app's copy of this file was deleted. Remove the entry or re-add the file.")
+                    .help("The app's copy of this file was deleted. Put it back to restore its page, or remove the entry.")
+            } else if MediaKind.of(store.fileURL(for: sheet, file: file)) == .unsupported {
+                let ext = (file as NSString).pathExtension
+                Label(ext.isEmpty ? "Can't show this file" : "Can't show .\(ext) files", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .labelStyle(.titleAndIcon)
+                    .help("Cheatsheet shows PDFs, images, markdown, HTML, text and web pages. This file isn't a page.")
+                    .accessibilityIdentifier("detail.unsupported")
             }
+            dependenciesCaption(for: file)
             Spacer()
             // Before the folder, so turning sync on or off doesn't move it.
             // Web pages have no file of their own to link.
@@ -358,6 +447,10 @@ struct CheatsheetDetailView: View {
             .foregroundStyle(.secondary)
             .disabled(!exists)
             .help(revealHelp(for: state))
+            .accessibilityIdentifier("detail.reveal")
+            .modifier(OptionalContextMenu(isPresent: hasRevealableOriginal(file)) {
+                revealMenu(for: file, exists: exists)
+            })
             Button {
                 store.removeFile(file, from: sheet.id)
             } label: {
@@ -634,3 +727,19 @@ private struct EmbeddedVerticalScrollView<Content: View>: NSViewRepresentable {
     }
 }
 
+
+/// Attaches a context menu only when there's something to show: a menu
+/// that starts out empty isn't attached, and isn't added later when its
+/// items appear.
+private struct OptionalContextMenu<MenuItems: View>: ViewModifier {
+    let isPresent: Bool
+    @ViewBuilder let menuItems: () -> MenuItems
+
+    func body(content: Content) -> some View {
+        if isPresent {
+            content.contextMenu(menuItems: menuItems)
+        } else {
+            content
+        }
+    }
+}

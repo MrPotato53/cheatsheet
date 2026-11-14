@@ -69,7 +69,7 @@ struct LauncherView: View {
 
     private func row(_ result: LauncherResult, isSelected: Bool) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: result.sheet == nil ? "gearshape" : "doc.text")
+            Image(systemName: result.systemImage)
                 .font(.system(size: 15))
                 .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                 .frame(width: 20)

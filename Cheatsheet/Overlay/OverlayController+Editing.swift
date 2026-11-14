@@ -139,6 +139,14 @@ extension OverlayController {
         reloadPages(session)
     }
 
+    /// Files of this sheet changed on disk: open overlays re-read them (one
+    /// being edited is left alone; it reloads when editing ends).
+    func reloadPages(forSheet sheetID: Cheatsheet.ID) {
+        for session in sessions where session.sheet.id == sheetID {
+            reloadPages(session)
+        }
+    }
+
     private func reloadPages(_ session: OverlaySession) {
         guard sessions.contains(where: { $0 === session }), session.editor == nil, !session.isLoadingPages else { return }
         session.pages = store.pages(for: session.sheet)

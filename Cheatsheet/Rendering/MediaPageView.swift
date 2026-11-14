@@ -12,6 +12,17 @@ struct MediaPageView: View {
     @Environment(\.pageZoom) private var zoom
 
     var body: some View {
+        // A copy deleted outside the app stays listed (keeping its page's
+        // settings); its page says which file is gone until it's restored.
+        if FileManager.default.fileExists(atPath: page.url.path) {
+            content
+        } else {
+            MissingFilePlaceholder(fileName: page.url.lastPathComponent)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch MediaKind.of(page.url) {
         case .pdf:
             zoomable {
@@ -50,6 +61,22 @@ struct MediaPageView: View {
         } else {
             content()
         }
+    }
+}
+
+/// Shown in place of a page whose file is gone, naming the file.
+struct MissingFilePlaceholder: View {
+    let fileName: String
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("“\(fileName)” is missing", systemImage: "exclamationmark.triangle")
+        } description: {
+            Text("The file was deleted or moved. Put it back to restore this page, or remove it in Settings.")
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("“\(fileName)” is missing")
+        .accessibilityIdentifier("page.missing")
     }
 }
 

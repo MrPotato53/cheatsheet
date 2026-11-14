@@ -25,6 +25,8 @@ final class AppModel {
     let overlay: OverlayController
     let hotkeys: HotkeyManager
     let launcher: LauncherController
+    let settingsNavigation = SettingsNavigation()
+    let fileMonitor: FileChangeMonitor
 
     /// Tracked by SettingsRootView via window notifications.
     var isSettingsWindowVisible = false {
@@ -63,6 +65,33 @@ final class AppModel {
         DispatchQueue.main.async {
             self.openSettingsNow(attemptsLeft: 20)
         }
+    }
+
+    /// Opens settings on the Cheatsheets tab with `sheetID` selected.
+    func openSettings(selecting sheetID: Cheatsheet.ID) {
+        settingsNavigation.requestSheet(sheetID)
+        openSettings()
+    }
+
+    /// Opens settings on the New Cheatsheet dialog (files or a web page —
+    /// the media type isn't known yet).
+    func openNewCheatsheetForm() {
+        settingsNavigation.requestNewSheetForm()
+        openSettings()
+    }
+
+    /// Files opened with Cheatsheet from Finder or dropped on its Dock icon:
+    /// together they become one new cheatsheet, shown in settings.
+    func openFiles(_ urls: [URL]) {
+        let supported = OpenedFiles.supported(urls)
+        let sheet = HTMLResourceAccess.withResourceAccess(for: supported) {
+            store.addSheet(dropped: DroppedItems(supported))
+        }
+        guard let sheet else {
+            NSSound.beep()
+            return
+        }
+        openSettings(selecting: sheet.id)
     }
 
     private func openSettingsNow(attemptsLeft: Int) {
@@ -123,9 +152,13 @@ final class AppModel {
         self.overlay = overlay
         self.hotkeys = hotkeys
         self.launcher = launcher
+        let fileMonitor = FileChangeMonitor(store: store, overlay: overlay)
+        self.fileMonitor = fileMonitor
         launcher.openSettings = { [weak self] in self?.openSettings() }
-        store.onChange = { [weak hotkeys, weak overlay, weak launcher, weak store] in
+        launcher.openNewCheatsheet = { [weak self] in self?.openNewCheatsheetForm() }
+        store.onChange = { [weak hotkeys, weak overlay, weak launcher, weak store, weak fileMonitor] in
             hotkeys?.sync()
+            fileMonitor?.libraryDidChange()
             overlay?.refreshFromStore()
             if let store {
                 RecentSheets.prune(keeping: store.sheets)
@@ -138,6 +171,8 @@ final class AppModel {
         hotkeys.sync()
         // Deferred: NSApp isn't fully set up during App init.
         Task { @MainActor in
+            AppAppearance.applyCurrent()
+            self.fileMonitor.start()
             self.applyDockIconPolicy()
             self.overlay.warmStartPages()
         }
@@ -195,6 +230,30 @@ final class AppModel {
             NSApp.windows.first {
                 $0.identifier?.rawValue.contains(WindowID.settings) == true
             }?.miniaturize(nil)
+        } else if action.hasPrefix("externalWrite:") || action.hasPrefix("externalDelete:"), UITestMode.isActive {
+            // "externalWrite:<sheet>:<file>:<text>" / "externalDelete:<sheet>:<file>"
+            // — changes a copy on disk behind the store's back, as another
+            // app would; FileChangeMonitor has to notice.
+            let isWrite = action.hasPrefix("externalWrite:")
+            let parts = action.split(separator: ":", maxSplits: isWrite ? 3 : 2).map(String.init)
+            if parts.count >= 3, let sheet = store.sheets.first(where: { $0.name == parts[1] }) {
+                let url = store.fileURL(for: sheet, file: parts[2])
+                if isWrite, parts.count == 4 {
+                    try? Data(parts[3].utf8).write(to: url)
+                } else if !isWrite {
+                    try? FileManager.default.removeItem(at: url)
+                }
+            }
+        } else if action == "newCheatsheet" {
+            // What the menu bar's and search bar's New Cheatsheet… do.
+            openNewCheatsheetForm()
+        } else if action.hasPrefix("openFiles:") {
+            // "openFiles:<name>|<name>" — what Finder's Open With and a drop
+            // on the Dock icon deliver, through the installed delegate. UI
+            // tests can't hand a sandboxed app their own files, so bare names
+            // are created here first (with placeholder text).
+            let urls = action.dropFirst("openFiles:".count).split(separator: "|").map { Self.debugOpenedFile(String($0)) }
+            NSApp.delegate?.application?(NSApp, open: urls)
         } else if action == "dockReopen" {
             // Exercises the Dock-click delegate path without LaunchServices.
             // Mirrors AppKit's notion of "visible windows": ordinary windows
@@ -251,15 +310,18 @@ final class AppModel {
                 overlay.setSearchQuery(String(rest[rest.index(after: separator)...]), in: session)
             }
         } else if action.hasPrefix("divergeOriginal:"), UITestMode.isActive {
-            // "divergeOriginal:<sheet name>" — links the sheet's first file to
-            // a new original with different contents, as if the user picked
-            // the wrong file (the open panel can't be driven reliably).
-            let name = String(action.dropFirst("divergeOriginal:".count))
+            // "divergeOriginal:<sheet name>[:<contents>]" — links the sheet's
+            // first file to a new original with different contents, as if the
+            // user picked the wrong file (the open panel can't be driven
+            // reliably). Contents may contain colons.
+            let rest = action.dropFirst("divergeOriginal:".count).split(separator: ":", maxSplits: 1).map(String.init)
+            let name = rest.first ?? ""
+            let contents = rest.count == 2 ? rest[1] : "Different contents from Cheatsheet's copy.\n"
             if let sheet = store.sheets.first(where: { $0.name == name }), let file = sheet.files.first {
                 let folder = store.rootURL.appendingPathComponent("Originals", isDirectory: true)
                 try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 let original = folder.appendingPathComponent(file)
-                try? Data("Different contents from Cheatsheet's copy.\n".utf8).write(to: original)
+                try? Data(contents.utf8).write(to: original)
                 Task { await store.linkOriginal(original, toFile: file, in: sheet.id) }
             }
         } else if action == "toggleLauncher" {
@@ -305,6 +367,15 @@ final class AppModel {
         return known.first { $0.1.hotSpot == current.hotSpot && $0.1.image.size == current.image.size }?.0 ?? "other"
     }
 
+    private static func debugOpenedFile(_ path: String) -> URL {
+        guard !path.contains("/") else { return URL(fileURLWithPath: path) }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Opened-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent(path)
+        try? Data("Opened from Finder.\n".utf8).write(to: url)
+        return url
+    }
+
     private func postDebugState(nonce: String) {
         func rect(_ r: NSRect) -> [Double] { [r.minX, r.minY, r.width, r.height] }
 
@@ -331,6 +402,9 @@ final class AppModel {
             "launcherResults": launcher.results.map(\.title),
             "launcherSelectedIndex": launcher.selectedIndex,
             "dockIconPolicy": Self.dockIconPolicy.rawValue,
+            "appearance": AppAppearance.current.rawValue,
+            "effectiveAppearance": NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])?.rawValue ?? "",
+            "settingsTab": settingsNavigation.tab == .cheatsheets ? "cheatsheets" : "general",
             // Diagnoses "openSettings did nothing": the action is captured by
             // the menu bar label's .task, which may not have run yet.
             "openActionSet": openSettingsWindowAction != nil,
@@ -353,6 +427,7 @@ final class AppModel {
                 "isEditingSearch": overlay.isEditingSearchField(in: session),
                 "isEditing": session.editor != nil,
                 "zoom": session.zoom,
+                "contentRevision": session.contentRevision,
                 "isVisible": session.panel.isVisible,
                 "isKey": session.panel.isKeyWindow,
                 "isMovable": session.panel.isMovableByWindowBackground,
@@ -382,6 +457,7 @@ final class AppModel {
                 "keepsStartPageLoaded": sheet.keepsStartPageLoaded,
                 "fileCount": sheet.files.count,
                 "rawFiles": sheet.rawFiles.sorted(),
+                "linkedFiles": sheet.links.keys.sorted(),
             ]
         }
         guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }

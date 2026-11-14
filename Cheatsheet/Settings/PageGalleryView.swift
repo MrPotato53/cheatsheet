@@ -25,6 +25,18 @@ final class GalleryCollectionView: NSCollectionView {
     var onDeleteSelection: (() -> Void)?
     var onDragExited: (() -> Void)?
     var onDragTargeted: ((Bool) -> Void)?
+    /// A page thumbnail was double-clicked (its index).
+    var onDoubleClickItem: ((Int) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        // Selection and drag tracking first, as usual; a second click on a
+        // thumbnail then opens it, like double-clicking in Finder.
+        super.mouseDown(with: event)
+        guard event.clickCount == 2,
+              let indexPath = indexPathForItem(at: convert(event.locationInWindow, from: nil))
+        else { return }
+        onDoubleClickItem?(indexPath.item)
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 51 || event.keyCode == 117 { // delete / forward delete
@@ -74,6 +86,8 @@ struct PageGalleryView: NSViewRepresentable {
     let onIncomingDrop: ([PageKey], Int) -> Bool
     /// Resolves an incoming page so a single-item drag can show a live ghost.
     let resolveIncoming: (PageKey) -> SheetPage?
+    /// Double-click: open the page full size.
+    var onOpen: ((SheetPage) -> Void)?
     let onDragActive: (Bool) -> Void
     var onDropTargeted: ((Bool) -> Void)?
 
@@ -99,6 +113,10 @@ struct PageGalleryView: NSViewRepresentable {
         }
         collectionView.onDragTargeted = { [weak coordinator = context.coordinator] targeted in
             coordinator?.parent.onDropTargeted?(targeted)
+        }
+        collectionView.onDoubleClickItem = { [weak coordinator = context.coordinator] index in
+            guard let parent = coordinator?.parent, parent.pages.indices.contains(index) else { return }
+            parent.onOpen?(parent.pages[index])
         }
         collectionView.collectionViewLayout = layout
         collectionView.isSelectable = true
@@ -639,6 +657,12 @@ final class PageThumbItem: NSCollectionViewItem {
         self.toggleHiddenLabel = toggleHiddenLabel
         self.onTransform = onTransform
         self.onToggleHidden = onToggleHidden
+        // One element per thumbnail, named by its page (UI tests double-click it).
+        view.setAccessibilityElement(true)
+        view.setAccessibilityRole(.image)
+        let pageSuffix = page.pdfPageIndex.map { "#\($0 + 1)" } ?? ""
+        view.setAccessibilityLabel(page.url.lastPathComponent + pageSuffix)
+        view.setAccessibilityIdentifier("page.thumb.\(page.url.lastPathComponent)\(pageSuffix)")
         render()
     }
 

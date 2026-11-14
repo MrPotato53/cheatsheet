@@ -201,11 +201,17 @@ final class OverlayController {
         RecentSheets.record(sheet.id)
         // Repeated key-downs while holding the hotkey land here too.
         if let existing = session(for: sheet.id) {
-            bringToFront(existing)
-            if let page, let index = Self.index(of: page, in: existing.pages) {
-                goToPage(index, in: existing)
+            let target = page.flatMap { Self.index(of: $0, in: existing.pages) }
+            if page == nil || target != nil {
+                bringToFront(existing)
+                if let target {
+                    goToPage(target, in: existing)
+                }
+                return
             }
-            return
+            // The page isn't in this viewing (a hidden page, or a shown one
+            // while a hidden page is up alone): reopen with the right pages.
+            hide(existing)
         }
         if let transient = transientSession {
             hide(transient)
@@ -268,8 +274,8 @@ final class OverlayController {
         // entry may describe the old pages, so it's used only if still current.
         if sheet.keepsStartPageLoaded, let warm = warmedStartPages[sheet.id], warm.inputs.hasSamePages(as: warmInputs(for: sheet)) {
             // Warm path: pages and the start page's decoded image are ready.
-            session.pages = warm.pages
-            session.pageIndex = openingIndex(for: sheet, pages: warm.pages, at: page)
+            session.pages = page.map { pagesRevealing($0, in: warm.pages, of: sheet) } ?? warm.pages
+            session.pageIndex = openingIndex(for: sheet, pages: session.pages, at: page)
             session.isLoadingPages = false
             updateFrame(for: session, animated: false)
             return
@@ -287,8 +293,8 @@ final class OverlayController {
                 let session,
                 self.sessions.contains(where: { $0 === session })
             else { return }
-            session.pages = pages
-            session.pageIndex = self.openingIndex(for: sheet, pages: pages, at: page)
+            session.pages = page.map { self.pagesRevealing($0, in: pages, of: sheet) } ?? pages
+            session.pageIndex = self.openingIndex(for: sheet, pages: session.pages, at: page)
             session.isLoadingPages = false
             self.updateFrame(for: session, animated: true)
         }
@@ -385,7 +391,12 @@ final class OverlayController {
     func hide(_ session: OverlaySession) {
         guard sessions.contains(where: { $0 === session }) else { return }
         endEditing(in: session)
-        lastPageIndex[session.sheet.id] = session.pageIndex
+        // A hidden page previewed alone from settings isn't where the user
+        // left off; keep the real last-viewed page.
+        let isHiddenPagePreview = !session.pages.isEmpty && session.pages.allSatisfy(\.isHidden)
+        if !isHiddenPagePreview {
+            lastPageIndex[session.sheet.id] = session.pageIndex
+        }
         sessions.removeAll { $0 === session }
         onSessionsChanged?()
         updateClickOutsideMonitor()
@@ -814,6 +825,9 @@ final class OverlayController {
 
     private func handleKeyEvent(_ event: NSEvent, in session: OverlaySession) -> Bool {
         if handleZoomKeyEvent(event, in: session) {
+            return true
+        }
+        if session.editor == nil, handleOpenInSettingsKeyEvent(event, in: session) {
             return true
         }
         if let handled = handleEditorKeyEvent(event, in: session) {

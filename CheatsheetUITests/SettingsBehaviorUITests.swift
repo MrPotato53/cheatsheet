@@ -495,18 +495,18 @@ final class OriginalSyncUITests: CheatsheetUITestCase {
         app.typeKey(.escape, modifierFlags: []) // the dialog's Cancel
         XCTAssertTrue(unlink.waitForExistence(timeout: 2), "cancelling should return to the review")
 
-        // Hovering a card offers Quick Look.
+        // Hovering a card offers a full-size preview, rendered as in the cheatsheet.
         copyCard.hover()
         let preview = app.buttons["review.preview"]
         XCTAssertTrue(preview.waitForExistence(timeout: 2), "hovering a card should offer a preview")
-        preview.click()
-        sleep(2)
-        let quickLookShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        quickLookShot.name = "3d quick look"
-        quickLookShot.lifetime = .keepAlways
-        add(quickLookShot)
-        app.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(unlink.waitForExistence(timeout: 2), "closing Quick Look shouldn't close the review")
+        // Clicked where it is: XCUITest's hittability check resolves to the
+        // card containing it, though a real click lands on the button.
+        preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        let done = app.buttons["review.preview.done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "preview didn't open")
+        sheetAttachment("3d preview")
+        done.click()
+        XCTAssertTrue(unlink.waitForExistence(timeout: 2), "closing the preview shouldn't close the review")
 
         unlink.click()
         XCTAssertTrue(waitForValue(of: link, "notLinked"), "unlinked file should be not linked")

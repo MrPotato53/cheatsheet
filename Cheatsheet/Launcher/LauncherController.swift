@@ -6,9 +6,12 @@ nonisolated struct LauncherResult: Identifiable {
         case sheet(Cheatsheet)
         /// Opens settings, so it's reachable without the menu bar icon.
         case settings
+        /// Opens settings on the New Cheatsheet dialog.
+        case newCheatsheet
     }
 
     static let settingsTitle = "Settings"
+    static let newCheatsheetTitle = "New Cheatsheet"
 
     let item: Item
     /// Nil for sheets listed before anything is typed.
@@ -18,6 +21,7 @@ nonisolated struct LauncherResult: Identifiable {
         switch item {
         case .sheet(let sheet): sheet.id.uuidString
         case .settings: "settings"
+        case .newCheatsheet: "newCheatsheet"
         }
     }
 
@@ -25,6 +29,21 @@ nonisolated struct LauncherResult: Identifiable {
         switch item {
         case .sheet(let sheet): sheet.name
         case .settings: Self.settingsTitle
+        case .newCheatsheet: Self.newCheatsheetTitle
+        }
+    }
+
+    var isNewCheatsheet: Bool {
+        if case .newCheatsheet = item { return true }
+        return false
+    }
+
+    /// Search bar row icon.
+    var systemImage: String {
+        switch item {
+        case .sheet: "doc.text"
+        case .settings: "gearshape"
+        case .newCheatsheet: "plus"
         }
     }
 
@@ -33,13 +52,17 @@ nonisolated struct LauncherResult: Identifiable {
         return nil
     }
 
-    /// Typed-query results: sheets and the Settings item ranked together
-    /// by name. Settings goes last into the ranking, so on an equal match
-    /// (a sheet named "Settings") the sheet comes first.
+    /// Typed-query results: sheets and the app items (Settings, New
+    /// Cheatsheet) ranked together by name. App items go last into the
+    /// ranking, so on an equal match (a sheet named "Settings") the sheet
+    /// comes first.
     static func ranked(sheets: [Cheatsheet], query: String) -> [LauncherResult] {
-        let names = sheets.map(\.name) + [settingsTitle]
+        let appItems: [(title: String, item: Item)] = [(settingsTitle, .settings), (newCheatsheetTitle, .newCheatsheet)]
+        let names = sheets.map(\.name) + appItems.map(\.title)
         return SheetNameMatcher.rank(names: names, query: query).map { ranked in
-            let item: Item = sheets.indices.contains(ranked.index) ? .sheet(sheets[ranked.index]) : .settings
+            let item = sheets.indices.contains(ranked.index)
+                ? .sheet(sheets[ranked.index])
+                : appItems[ranked.index - sheets.count].item
             return LauncherResult(item: item, match: ranked.match)
         }
     }
@@ -61,6 +84,8 @@ final class LauncherController {
     private(set) var focusRequest = 0
     /// Set by AppModel: opening settings is app-level, not the launcher's.
     @ObservationIgnored var openSettings: () -> Void = {}
+    /// Set by AppModel: settings on the New Cheatsheet dialog.
+    @ObservationIgnored var openNewCheatsheet: () -> Void = {}
 
     @ObservationIgnored private let panel = LauncherPanel()
     /// Top edge on screen; the panel grows and shrinks downward from it.
@@ -128,6 +153,9 @@ final class LauncherController {
         case .settings:
             hide()
             openSettings()
+        case .newCheatsheet:
+            hide()
+            openNewCheatsheet()
         }
     }
 
